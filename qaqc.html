@@ -111,6 +111,7 @@
       .upload-overlay {
         position: fixed;
         inset: 0;
+        overflow-y: auto;
         background: #f7f7f7;
         z-index: 100;
         display: flex;
@@ -288,14 +289,32 @@
         opacity: 0.6;
       }
 
+      /* ── Spinner ── */
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @keyframes pulse-dot {
+        0%, 100% { opacity: 0.2; transform: scale(0.8); }
+        50%       { opacity: 1;   transform: scale(1); }
+      }
+
+      .analysis-spinner {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        border: 3px solid #e8e8e8;
+        border-top-color: #3dba6e;
+        animation: spin 0.9s linear infinite;
+        margin-bottom: 20px;
+      }
+
       /* ── Progress bar (upload overlay) ── */
       .upload-progress {
         display: none;
         flex-direction: column;
         align-items: center;
-        gap: 14px;
+        gap: 12px;
         width: 520px;
         max-width: 100%;
+        padding-top: 8px;
       }
 
       .upload-progress.active { display: flex; }
@@ -1368,6 +1387,108 @@
         line-height: 1.5;
       }
 
+      /* ── Checklist reference panel ── */
+      .checklist-ref {
+        width: 900px;
+        max-width: calc(100vw - 32px);
+        margin-top: 36px;
+        margin-bottom: 48px;
+        border: 1px solid #e8e8e8;
+        border-radius: 10px;
+        background: #ffffff;
+      }
+
+      .checklist-ref-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 22px;
+        background: #fafafa;
+        border-bottom: 1px solid #e8e8e8;
+      }
+
+      .checklist-ref-title {
+        font-size: 0.88rem;
+        font-weight: 600;
+        color: #333;
+        flex: 1;
+      }
+      .checklist-ref-meta {
+        font-size: 0.75rem;
+        color: #aaa;
+      }
+      .checklist-ref-toggle {
+        font-size: 0.75rem;
+        color: #3dba6e;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      .checklist-ref-body {
+        padding: 24px 22px;
+      }
+
+      .checklist-groups {
+        columns: 2;
+        column-gap: 40px;
+      }
+
+      .cl-group {
+        break-inside: avoid;
+        border-bottom: 1px solid #f0f0f0;
+        padding-bottom: 16px;
+        margin-bottom: 16px;
+      }
+      .cl-group:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+
+      .cl-group-header {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .cl-group-label {
+        font-size: 0.65rem;
+        font-weight: 700;
+        color: #3dba6e;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+      .cl-group-name {
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: #222;
+      }
+      .cl-group-count {
+        font-size: 0.68rem;
+        color: #ccc;
+        margin-left: auto;
+        flex-shrink: 0;
+      }
+
+      .cl-items {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        padding-left: 2px;
+      }
+      .cl-item {
+        display: flex;
+        gap: 10px;
+        font-size: 0.78rem;
+        line-height: 1.45;
+        color: #555;
+      }
+      .cl-item-ref {
+        color: #bbbbbb;
+        white-space: nowrap;
+        flex-shrink: 0;
+        min-width: 42px;
+        font-variant-numeric: tabular-nums;
+      }
+
       /* ── Session warning in topbar ── */
       .session-note {
         font-size: 0.7rem;
@@ -1437,6 +1558,33 @@
       }
       .cost-estimate.visible { display: block; }
       .cost-est-amount { color: #555; font-weight: 500; }
+
+      /* ── Mobile responsive ── */
+      @media (max-width: 640px) {
+        .upload-overlay { padding: 40px 12px 40px; }
+        .upload-heading { font-size: 1.3rem; text-align: center; }
+        .upload-sub-heading { font-size: 0.78rem; text-align: center; }
+        .upload-zone { width: 100%; max-width: 100%; padding: 28px 16px; }
+        .analyze-all-btn { width: 100%; max-width: 100%; }
+
+        .cycle-panel { width: 100%; max-width: 100%; padding: 20px 16px 16px; }
+        .cycle-slide-title { font-size: 0.95rem; }
+        .cycle-slide-body { font-size: 0.78rem; }
+        .cycle-backend-text { font-size: 0.68rem; }
+
+        .checklist-ref { width: 100%; max-width: 100%; margin-top: 24px; }
+        .checklist-ref-header { padding: 12px 14px; flex-wrap: wrap; gap: 6px; }
+        .checklist-ref-body { padding: 16px 14px; }
+        .checklist-groups { columns: 1; }
+        .cl-group-count { display: none; }
+
+        .upload-progress-bar-track { width: 100% !important; max-width: 100%; }
+      }
+
+      @media (min-width: 641px) and (max-width: 960px) {
+        .checklist-groups { columns: 1; }
+        .cycle-panel, .checklist-ref { width: calc(100vw - 48px); }
+      }
     </style>
   </head>
   <body>
@@ -1447,10 +1595,6 @@
       <div class="topbar-divider"></div>
       <span class="topbar-title">QA/QC — Document Review</span>
       <span class="topbar-meta" id="topbar-meta">No documents loaded</span>
-      <div class="doc-mode-toggle" id="doc-mode-toggle" style="display:none">
-        <button class="mode-btn active" id="mode-spec" onclick="switchDocMode('spec')" disabled>Spec</button>
-        <button class="mode-btn" id="mode-drawings" onclick="switchDocMode('drawings')" disabled>Drawings</button>
-      </div>
       <div class="topbar-actions">
         <div class="session-note" id="session-note" style="display:none">
           <div class="session-note-dot"></div>
@@ -1495,11 +1639,12 @@
 
       <!-- Progress (shown during analysis) -->
       <div class="upload-progress" id="upload-progress">
+        <div class="analysis-spinner"></div>
         <div class="upload-progress-file">
           <span class="upload-progress-icon">📄</span>
           <span id="upload-filename">Processing…</span>
         </div>
-        <div class="upload-progress-bar-track">
+        <div class="upload-progress-bar-track" style="width:340px;max-width:90vw;">
           <div class="upload-progress-bar-fill" id="upload-bar"></div>
         </div>
         <div class="upload-progress-status" id="upload-status">Starting…</div>
@@ -1525,6 +1670,369 @@
           </div>
         </div>
       </div>
+
+      <!-- Checklist Reference -->
+      <div class="checklist-ref" id="checklist-ref">
+        <div class="checklist-ref-header">
+          <span class="checklist-ref-title">R3A Drawing Standards Checklist</span>
+          <span class="checklist-ref-meta">22 sheet types · 160+ items</span>
+        </div>
+        <div class="checklist-ref-body">
+          <div class="checklist-groups">
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">General</span><span class="cl-group-name">All Sheets — General Items</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">G.1</span><span>Confirm design documents comply with scope of work narrative and project goals</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.2</span><span>Building Code Review completed — egress, accessibility, construction type, variances</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.3</span><span>Zoning / Municipal Code Review completed</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.4</span><span>Plumbing count review completed</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.5</span><span>All plans drawn at consistent scale within type (Life Safety same scale; Floor Plans same scale, etc.)</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.6</span><span>All plans in the same orientation</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.7</span><span>Consistent terminology between plans and specifications</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.8</span><span>No vague notes such as "see architectural" or "see structural" as the only descriptor</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.9</span><span>Avoid match-lines where possible</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.10</span><span>Avoid the word "new" — use specific scope language instead</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.11</span><span>Views organized top-left to right-and-down; view numbers match order</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.12</span><span>View titles in ALL CAPS</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.13</span><span>Grid used as non-plottable guide to organize sheets</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.14</span><span>North arrow to the left of view number on floor plan views</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.15</span><span>Client Name and Address correct</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.16</span><span>Project Name and Address correct</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.17</span><span>Project Directory updated with Owner, Architect, and Consultant contacts</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.18</span><span>All text (general notes, reference notes, detail notes) in Arial 3/32" all-caps, left-justified</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.19</span><span>Note leaders centered on top row (leader on left) or bottom row (leader on right)</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.20</span><span>Room tags centered in room; numbering clockwise from entry, sequential by floor (100s, 200s…)</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.21</span><span>Dimensions locate all walls and doors; use 1/4" or larger, single strings</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.22</span><span>No overlapping information — tags and notes must not obscure each other</span></div>
+                <div class="cl-item"><span class="cl-item-ref">G.23</span><span>All typical and general notes reviewed for applicability, spelling, and grammar</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">TB</span><span class="cl-group-name">Title Block — Every Sheet</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">TB-1</span><span>Client Name and Address correct and consistent on cover sheet and title block</span></div>
+                <div class="cl-item"><span class="cl-item-ref">TB-2</span><span>Project Name and Address correct on cover sheet and title block</span></div>
+                <div class="cl-item"><span class="cl-item-ref">TB-3</span><span>Project number correct</span></div>
+                <div class="cl-item"><span class="cl-item-ref">TB-4</span><span>Document/Deliverable Phase accurate to submission</span></div>
+                <div class="cl-item"><span class="cl-item-ref">TB-5</span><span>Issuance date correct</span></div>
+                <div class="cl-item"><span class="cl-item-ref">TB-6</span><span>Logo and firm information graphically correct</span></div>
+                <div class="cl-item"><span class="cl-item-ref">TB-7</span><span>Sheet name text is ALL CAPS</span></div>
+                <div class="cl-item"><span class="cl-item-ref">TB-8</span><span>Sheet number correct per sheet series</span></div>
+                <div class="cl-item"><span class="cl-item-ref">TB-9</span><span>Permit stamp applied when required; correct seal for the state</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">G-001</span><span class="cl-group-name">Cover Sheet</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Deliverable Issuance Phase and Date updated</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Project Location Map shown — building identified with hatch and "PROJECT LOCATION" note</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Site Plan included</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Project Directory shows current Owner, Architect, and Consultant contacts</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>Project Rendering included — indicative "money shot" of the project</span></div>
+                <div class="cl-item"><span class="cl-item-ref">006</span><span>Sheet List updated including consultant drawings for submission</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">G-010</span><span class="cl-group-name">Code Summary</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Code Summary PDF linked at 300 ppi</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Code Summary information coordinated and current with design</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Occupant load indicated and matches Life Safety sheets</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Fire ratings for construction type indicated and coordinated with Life Safety and floor plans</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>Work area on Code Summary coordinated with Life Safety plan</span></div>
+                <div class="cl-item"><span class="cl-item-ref">006</span><span>IECC requirements included — opaque doors, windows, thermal envelope (walls, roof)</span></div>
+                <div class="cl-item"><span class="cl-item-ref">007</span><span>Plumbing counts shown (existing vs. proposed) and coordinated with plans</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">G-100s</span><span class="cl-group-name">Life Safety Plans</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Correct view template used — plan halftoned</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Legend and notes reviewed for applicability; AHJ referenced correctly</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Fire-rated assemblies identified with correct line type (1-hour, 2-hour, etc.)</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Occupant loads identified per area or occupancy room schedule confirmed</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>Limit-of-Work line type and note used for renovation work area; coordinated with Code Summary</span></div>
+                <div class="cl-item"><span class="cl-item-ref">006</span><span>Exit width tags on exit doors to grade and stair doors; parameters edited</span></div>
+                <div class="cl-item"><span class="cl-item-ref">007</span><span>Exit signs shown at required exits; directional arrows shown; coordinated with RCP and Electrical</span></div>
+                <div class="cl-item"><span class="cl-item-ref">008</span><span>Fire extinguishers shown; location meets code distance/area; FEC signage and light noted if recessed</span></div>
+                <div class="cl-item"><span class="cl-item-ref">009</span><span>Exit travel distance path shown with EP linetype; note reads "EXIT TRAVEL DISTANCE = 00'-00""</span></div>
+                <div class="cl-item"><span class="cl-item-ref">010</span><span>Accessible route noted from work area to elevators/exits</span></div>
+                <div class="cl-item"><span class="cl-item-ref">011</span><span>Clear floor areas and turning radii shown</span></div>
+                <div class="cl-item"><span class="cl-item-ref">012</span><span>Stairs identified with rating and diagonal hatch per legend</span></div>
+                <div class="cl-item"><span class="cl-item-ref">013</span><span>Occupant load noted at exit doors with text note and oval border</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">G-200s</span><span class="cl-group-name">UL Assemblies</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>UL assembly PDFs linked into drafting view at correct resolution; organized left-to-right, top-to-bottom</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>UL assemblies coordinated with Wall Types legend</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">G-300s</span><span class="cl-group-name">Signage Plans</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Correct view template used — plan halftoned similar to Life Safety</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Elevation legend of signage types provided</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Signage tagged at doors and other locations per scope</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Signage schedule complete with legend, sizes, and materials</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>General notes include electrical lighting requirements for illuminated signage</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">A-001</span><span class="cl-group-name">Abbreviations, Symbols, Mounting Heights</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Sheet largely unchanged/unedited from standard template</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Standard Mounting Heights reviewed and dimensions confirmed against current codes</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">A-002</span><span class="cl-group-name">General Notes and Wall Types</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>General Construction and Demolition Notes edited for project scope</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Wall type details added for initial wall selections</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>General Wall Type Notes edited for project scope</span></div>
+                <div class="cl-item"><span class="cl-item-ref">006</span><span>General Referenced Construction and Demolition Notes edited for project scope</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">A-010s</span><span class="cl-group-name">Architectural Site Plans</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Building footprint shown (not floor plan) — thick perimeter line with grey hatch</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Site context and adjacent buildings shown</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Street labels shown</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Survey or CAD background linked (black, non-critical text removed)</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>New hardscape/sidewalks shown with hatching distinguishing landscape from hardscape</span></div>
+                <div class="cl-item"><span class="cl-item-ref">006</span><span>Design elements shown to quantify/qualify scope</span></div>
+                <div class="cl-item"><span class="cl-item-ref">007</span><span>Dimension strings for critical clearances; continuous strings off existing buildings and column grids</span></div>
+                <div class="cl-item"><span class="cl-item-ref">008</span><span>Exterior Elevation tags shown</span></div>
+                <div class="cl-item"><span class="cl-item-ref">009</span><span>Section/Detail tags for exterior site elements</span></div>
+                <div class="cl-item"><span class="cl-item-ref">010</span><span>Callouts for enlarged site plans and floor plans</span></div>
+                <div class="cl-item"><span class="cl-item-ref">011</span><span>Correct view template used</span></div>
+                <div class="cl-item"><span class="cl-item-ref">012</span><span>Notes identify exterior stairs, ramps, hardscape, landscape, and scope</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">A-100s</span><span class="cl-group-name">Floor Plans</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Walls showing correct thickness per actual wall types (interior/exterior)</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Windows correct width, height, sill height</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Doors and storefronts correct dimensions and location</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Code compliance confirmed — airlocks, egress door clearances</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>Toilet rooms — correct fixture counts, layouts, plumbing clearances</span></div>
+                <div class="cl-item"><span class="cl-item-ref">006</span><span>Room tags with name and number (101, 201… clockwise from entry)</span></div>
+                <div class="cl-item"><span class="cl-item-ref">007</span><span>Casework/millwork shown with countertops, base/wall cabinets, sinks, appliances</span></div>
+                <div class="cl-item"><span class="cl-item-ref">008</span><span>Door and storefront tags placed correctly (leaf center, overhead to side, storefront centered)</span></div>
+                <div class="cl-item"><span class="cl-item-ref">009</span><span>Dimensions — column grid, exterior face of walls, interior strings locating all walls and doors</span></div>
+                <div class="cl-item"><span class="cl-item-ref">010</span><span>Column grids shown and coordinated</span></div>
+                <div class="cl-item"><span class="cl-item-ref">011</span><span>Correct view template used</span></div>
+                <div class="cl-item"><span class="cl-item-ref">012</span><span>Scope of work notes provided (reference notes or text notes)</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">A-110s</span><span class="cl-group-name">Reflected Ceiling Plans</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Dimensions — column grid and interior strings</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Column grids shown and coordinated</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Ceiling layouts shown with coordinated types and elevations</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Light fixtures, supply/return/exhaust diffusers, and sprinkler heads shown</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>Correct view template used</span></div>
+                <div class="cl-item"><span class="cl-item-ref">006</span><span>Ceiling access panels shown</span></div>
+                <div class="cl-item"><span class="cl-item-ref">007</span><span>Scope of work notes provided</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">A-120s</span><span class="cl-group-name">Roof Plans</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Dimensions — column grid, exterior face of walls, interior strings</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Column grids shown and coordinated</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Mechanical units and penetrations shown with size and location</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Roof drainage shown — gutters, downspouts, drains, scuppers, slopes indicated</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>Roof assembly modeled; slopes and direction identified</span></div>
+                <div class="cl-item"><span class="cl-item-ref">006</span><span>Roof access and walkway paths to units shown</span></div>
+                <div class="cl-item"><span class="cl-item-ref">007</span><span>Typical Wall Section tags shown</span></div>
+                <div class="cl-item"><span class="cl-item-ref">008</span><span>Roof edge conditions identified and detailed — coping, gravel stop, etc.</span></div>
+                <div class="cl-item"><span class="cl-item-ref">009</span><span>Correct view template used</span></div>
+                <div class="cl-item"><span class="cl-item-ref">010</span><span>Scope of work notes provided</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">A-200s</span><span class="cl-group-name">Exterior Elevations</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Materials proposed identified graphically with Basis of Design notes</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Correct view template used</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Exterior glazing identified with glazing "ticks"</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Typical Wall Section and Building Section tags visible and aligned</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>Ground plane shown with masking region (extra heavy line)</span></div>
+                <div class="cl-item"><span class="cl-item-ref">006</span><span>Foundations shown with dashed lines</span></div>
+                <div class="cl-item"><span class="cl-item-ref">007</span><span>Vertical dimensions provided — heights, floor references, horizontal/vertical material changes</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">A-300s</span><span class="cl-group-name">Building Sections</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Wall section and roof assembly drafted/modeled accurately with glazing</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Ground plane and hatches for earth/gravel shown</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Foundations and perimeter drains shown if needed</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Correct view template used</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>2D information added — sections cannot be unedited straight-from-Revit</span></div>
+                <div class="cl-item"><span class="cl-item-ref">006</span><span>Room tags provided for rooms visible in section</span></div>
+                <div class="cl-item"><span class="cl-item-ref">007</span><span>Vertical dimensions — heights, floor references, material changes</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">A-310s</span><span class="cl-group-name">Wall Sections</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Detailed notes describing each wall assembly element; notes left-justified with leaders per standard</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Wall section and roof assembly drafted/modeled accurately with glazing</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Ground plane and hatches for earth/gravel shown</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Foundations and perimeter drains shown if needed</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>Correct view template used</span></div>
+                <div class="cl-item"><span class="cl-item-ref">006</span><span>2D information added; sections cannot be unedited straight-from-Revit</span></div>
+                <div class="cl-item"><span class="cl-item-ref">007</span><span>Vertical dimensions — heights, floor references, material changes</span></div>
+                <div class="cl-item"><span class="cl-item-ref">008</span><span>Callouts for exterior details at larger scale</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">A-400s</span><span class="cl-group-name">Enlarged Floor Plans &amp; Interior Elevations</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Walls correct thickness per actual wall types</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Windows correct width, height, sill height</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Doors and storefronts correct dimensions and location</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Code compliance confirmed — egress doors, clearances</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>Toilet rooms — correct counts, layouts, plumbing clearances</span></div>
+                <div class="cl-item"><span class="cl-item-ref">006</span><span>Room tags with name and number</span></div>
+                <div class="cl-item"><span class="cl-item-ref">007</span><span>Casework/millwork shown (overall dimensions only in plan; details in elevations)</span></div>
+                <div class="cl-item"><span class="cl-item-ref">008</span><span>Door and storefront tags placed correctly</span></div>
+                <div class="cl-item"><span class="cl-item-ref">009</span><span>Dimensions — column grid, exterior/interior strings</span></div>
+                <div class="cl-item"><span class="cl-item-ref">010</span><span>Interior elevation tags shown; all required elevations tagged and on sheet</span></div>
+                <div class="cl-item"><span class="cl-item-ref">011</span><span>Correct view template used</span></div>
+                <div class="cl-item"><span class="cl-item-ref">012</span><span>Scope of work notes provided</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">A-500s</span><span class="cl-group-name">Details</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Detailed notes for each element; left-justified with leaders per standard</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Correct view template used</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Detail components used to illustrate elements (metal studs, sheathing, etc.)</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Critical dimensions provided where needed (alignments, offsets)</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>Hatches correctly reflect materials noted in details</span></div>
+                <div class="cl-item"><span class="cl-item-ref">006</span><span>2D information added — details cannot be unedited straight-from-Revit</span></div>
+                <div class="cl-item"><span class="cl-item-ref">007</span><span>Callout/tags to corresponding details at larger scale</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">A-600s</span><span class="cl-group-name">Door Schedules and Details</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Door Type drafting view edited to show door slabs in project</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Frame Type drafting view edited to show frames in project</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Hardware sets noted in schedule</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Head, jamb, and sill details coordinated with project conditions</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>Storefront details and system elevations added and coordinated with Door Schedule</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">A-610s</span><span class="cl-group-name">Storefronts and Windows</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Storefront Type Elevations show dimensions, glazing/frame types, mullion layouts, Head/Jamb/Sill details</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Frame/mullion visually correct for specified system (2" typical, curtainwall 2.5", frame depth 4.5"–7"+)</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Frame type and glazing types noted in elevations and general notes/legend</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Head, jamb, and sill details coordinated with project conditions</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>Storefront details coordinated with Door Schedule</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">A-700s</span><span class="cl-group-name">Stairs, Ramps, Elevators</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Enlarged floor plans for stairs, elevators, ramps match typical enlarged plan standard</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Correct view template used</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Stair design and details — 7" max riser, 11" min tread, 1" inset/overlap at toe</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Railing design and details — max ramp slope 1:12; railings required at 1:20+</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>Elevator details included per project type</span></div>
+                <div class="cl-item"><span class="cl-item-ref">006</span><span>Stair, elevator, and ramp sections with 2D information, notes, and dimensions</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">A-800s</span><span class="cl-group-name">Exterior Details</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Details organized vertically and horizontally where related</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Sheet organized with grid</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Notes left-justified — leader from bottom on right, from top on left</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Notes specific to condition, indicating contractor scope and material references (no product names in drawings)</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>Notes are sentences without periods at end; acceptable punctuation: - / ,</span></div>
+                <div class="cl-item"><span class="cl-item-ref">006</span><span>Vertical dimensions and column grids/levels shown in applicable views</span></div>
+                <div class="cl-item"><span class="cl-item-ref">007</span><span>Correct view template and drawing scale used</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">AF001</span><span class="cl-group-name">Finish Schedule</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Wall and Flooring Schedules with finish selections provided</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Correct schedule view template used</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Finish General Notes and project-specific notes reviewed for applicability</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Schedule view template correct</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">AF101</span><span class="cl-group-name">Finish Plans</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Correct view template used (no building grid)</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Finish tags on plans; separate plans for walls/surfaces vs. floors for clarity</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Finish tags correspond to schedules on AF001</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Dimensions not used on Finish Plans (unless separate dimensioned plans directed by PM)</span></div>
+                <div class="cl-item"><span class="cl-item-ref">005</span><span>Material alignment identified; tag transitions coordinated</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">AQ001</span><span class="cl-group-name">Equipment Schedule</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Equipment Schedule with tag, description, and required utilities</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Supply/install responsibility noted — OFOI, OFCI, CFCI, or CFOI</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Equipment General Notes reviewed for applicability</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Correct view template used</span></div>
+              </div>
+            </div>
+
+            <div class="cl-group">
+              <div class="cl-group-header"><span class="cl-group-label">AQ101</span><span class="cl-group-name">Equipment Plans</span></div>
+              <div class="cl-items">
+                <div class="cl-item"><span class="cl-item-ref">001</span><span>Correct view template used</span></div>
+                <div class="cl-item"><span class="cl-item-ref">002</span><span>Equipment locations and layouts shown with specialty clearances noted</span></div>
+                <div class="cl-item"><span class="cl-item-ref">003</span><span>Tags per piece of equipment with leaders for clarity</span></div>
+                <div class="cl-item"><span class="cl-item-ref">004</span><span>Equipment General Notes reviewed for applicability</span></div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
     </div>
 
     <!-- Workspace -->
@@ -1558,9 +2066,8 @@
       <div class="right-panel">
         <div class="panel-tabs" id="panel-tabs">
           <div class="panel-tab" id="tab-btn-issues" onclick="switchTab('issues', this)">Issues</div>
-          <div class="panel-tab" id="tab-btn-sheets" onclick="switchTab('sheets', this)" style="display:none">Sheets</div>
+          <div class="panel-tab" id="tab-btn-sheets" onclick="switchTab('sheets', this)">Sheets</div>
           <div class="panel-tab" id="tab-btn-ask" onclick="switchTab('ask', this)">Ask</div>
-          <div class="panel-tab" id="tab-btn-sections" onclick="switchTab('sections', this)">Sections</div>
           <div class="panel-tab active" id="tab-btn-grade" onclick="switchTab('grade', this)">Grade</div>
         </div>
 
@@ -1651,7 +2158,6 @@
         drawingDismissed: new Set(),
 
         // Shared
-        activeMode: 'spec',
         docView: 'analysis',   // 'analysis' | 'source'
         specObjectUrl: null,
         drawingsObjectUrl: null,
@@ -1677,14 +2183,209 @@
         return 'clause-' + String(clauseId).replace(/\./g, '_');
       }
 
+      // ── Checklist reference panel ────────────────────────────────────────
+      const CHECKLIST_DATA = [
+        { ref: 'General', name: 'General Items (all sheets)', items: [
+          ['G.5','All plans drawn at consistent scale within type'],
+          ['G.6','All plans in the same orientation'],
+          ['G.7','Consistent terminology between plans and specifications'],
+          ['G.8','No vague notes ("see architectural") as sole descriptor'],
+          ['G.10','Avoid the word "new" — use specific scope language'],
+          ['G.11','Views organized top-left to right/down; numbers match order'],
+          ['G.12','View titles in ALL CAPS'],
+          ['G.14','North arrow left of view number on floor plans'],
+          ['G.18','All text Arial 3/32" all-caps, left-justified'],
+          ['G.20','Room tags centered; numbered clockwise from entry by floor'],
+          ['G.21','Dimensions locate all walls and doors; 1/4" or larger, single strings'],
+          ['G.22','No overlapping information'],
+          ['G.23','General notes reviewed for applicability, spelling, grammar'],
+        ]},
+        { ref: 'TB', name: 'Title Block (every sheet)', items: [
+          ['TB-1','Client name and address correct on cover and title block'],
+          ['TB-2','Project name and address correct'],
+          ['TB-3','Project number correct'],
+          ['TB-4','Document phase accurate to submission'],
+          ['TB-5','Issuance date correct'],
+          ['TB-7','Sheet name ALL CAPS'],
+          ['TB-8','Sheet number correct per sheet series'],
+          ['TB-9','Permit stamp applied when required; correct state seal'],
+        ]},
+        { ref: 'G-001', name: 'Cover Sheet', items: [
+          ['001','Deliverable phase and date updated'],
+          ['002','Project Location Map with hatch and "PROJECT LOCATION" note'],
+          ['003','Site plan included'],
+          ['004','Project Directory with current Owner, Architect, Consultant contacts'],
+          ['005','Project rendering included (indicative "money shot")'],
+          ['006','Sheet list updated with consultant drawings'],
+        ]},
+        { ref: 'G-010', name: 'Code Summary', items: [
+          ['001','Code Summary PDF linked at 300 ppi'],
+          ['002','Code Summary coordinated and current with design'],
+          ['003','Occupant load indicated and matches Life Safety sheets'],
+          ['004','Fire ratings coordinated with Life Safety and floor plans'],
+          ['005','Work area coordinated with Life Safety plan'],
+          ['006','IECC requirements included (doors, windows, thermal envelope)'],
+          ['007','Plumbing counts shown (existing vs. proposed), coordinated with plans'],
+        ]},
+        { ref: 'G-100s', name: 'Life Safety Plans', items: [
+          ['001','Correct view template; plan halftoned'],
+          ['002','Legend and AHJ references correct for jurisdiction'],
+          ['003','Fire-rated assemblies with correct line type (1-hr, 2-hr, etc.)'],
+          ['004','Occupant loads identified per area'],
+          ['005','Limit-of-Work line type and note shown; coordinated with Code Summary'],
+          ['006','Exit width tags on exit doors and stair doors'],
+          ['007','Exit signs with directional arrows; coordinated with RCP and Electrical'],
+          ['008','Fire extinguishers shown; FEC signage/light noted if recessed'],
+          ['009','Exit travel distance path with EP linetype and "EXIT TRAVEL DISTANCE = 00′-00″"'],
+          ['010','Accessible route noted from work area to elevators/exits'],
+          ['011','Clear floor areas and turning radii shown'],
+          ['012','Stairs identified with rating and diagonal hatch per legend'],
+          ['013','Occupant load at exit doors with oval border note'],
+        ]},
+        { ref: 'G-200s', name: 'UL Assemblies', items: [
+          ['001','UL assembly PDFs linked in drafting view; organized L→R, top→bottom'],
+          ['002','UL assemblies coordinated with Wall Types legend'],
+        ]},
+        { ref: 'G-300s', name: 'Signage Plans', items: [
+          ['001','Correct view template; plan halftoned'],
+          ['002','Elevation legend of signage types provided'],
+          ['003','Signage tagged at doors and scope locations'],
+          ['004','Signage schedule complete with legend, sizes, materials'],
+          ['005','Notes for electrical requirements for illuminated signage'],
+        ]},
+        { ref: 'A-001/002', name: 'Abbreviations, Symbols, General Notes', items: [
+          ['001','A-001 largely unchanged from standard template'],
+          ['002','Standard Mounting Heights confirmed against current codes'],
+          ['003','General Construction/Demolition Notes edited for project scope'],
+          ['004','Wall type details added for initial selections'],
+          ['005','General Wall Type Notes edited for project scope'],
+        ]},
+        { ref: 'A-010s', name: 'Architectural Site Plans', items: [
+          ['001','Building footprint shown (not floor plan) — thick perimeter, grey hatch'],
+          ['002','Site context and adjacent buildings shown'],
+          ['003','Street labels shown'],
+          ['007','Dimension strings for critical clearances; continuous strings off existing buildings'],
+          ['008','Exterior Elevation tags shown'],
+          ['011','Correct view template used'],
+          ['012','Notes identify stairs, ramps, hardscape, landscape, scope'],
+        ]},
+        { ref: 'A-100s', name: 'Floor Plans', items: [
+          ['001','Walls showing correct thickness per actual wall types'],
+          ['004','Code compliance — airlocks, egress clearances'],
+          ['005','Toilet rooms — correct fixture counts, layouts, clearances'],
+          ['006','Room tags with name and number (101, 201… clockwise from entry)'],
+          ['008','Door and storefront tags placed correctly'],
+          ['009','Dimensions — column grid, exterior face of walls, interior strings'],
+          ['010','Column grids shown and coordinated'],
+          ['011','Correct view template used'],
+          ['012','Scope of work notes provided'],
+        ]},
+        { ref: 'A-110s', name: 'Reflected Ceiling Plans', items: [
+          ['003','Ceiling layouts with coordinated types and elevations'],
+          ['004','Light fixtures, diffusers (supply/return/exhaust), sprinkler heads shown'],
+          ['005','Correct view template used'],
+          ['006','Ceiling access panels shown'],
+        ]},
+        { ref: 'A-120s', name: 'Roof Plans', items: [
+          ['003','Mechanical units and penetrations shown with size and location'],
+          ['004','Roof drainage shown — gutters, downspouts, drains, scuppers, slopes'],
+          ['007','Typical Wall Section tags shown'],
+          ['008','Roof edge conditions identified — coping, gravel stop, etc.'],
+          ['009','Correct view template used'],
+        ]},
+        { ref: 'A-200s', name: 'Exterior Elevations', items: [
+          ['001','Materials identified graphically with Basis of Design notes'],
+          ['003','Exterior glazing identified with glazing "ticks"'],
+          ['004','Wall Section and Building Section tags visible and aligned'],
+          ['005','Ground plane shown with masking region (extra heavy line)'],
+          ['006','Foundations shown with dashed lines'],
+          ['007','Vertical dimensions — heights, floor references, material changes'],
+        ]},
+        { ref: 'A-300s', name: 'Building Sections', items: [
+          ['001','Wall and roof assembly drafted/modeled accurately with glazing'],
+          ['002','Ground plane and hatches for earth/gravel shown'],
+          ['004','Correct view template used'],
+          ['005','2D information added — cannot be unedited straight-from-Revit'],
+          ['006','Room tags for rooms visible in section'],
+          ['007','Vertical dimensions — heights, floor references, material changes'],
+        ]},
+        { ref: 'A-310s', name: 'Wall Sections', items: [
+          ['001','Detailed notes per element; left-justified with leaders per standard'],
+          ['005','Correct view template used'],
+          ['006','2D information added; not unedited Revit output'],
+          ['007','Vertical dimensions — heights, floor references, material changes'],
+          ['008','Callouts for exterior details at larger scale'],
+        ]},
+        { ref: 'A-400s', name: 'Enlarged Floor Plans & Interior Elevations', items: [
+          ['004','Code compliance — egress doors, clearances'],
+          ['009','Dimensions — column grid, exterior/interior strings'],
+          ['010','Interior elevation tags shown; all required elevations tagged and on sheet'],
+          ['011','Correct view template used'],
+        ]},
+        { ref: 'A-500s', name: 'Details', items: [
+          ['001','Notes per element; left-justified with leaders per standard'],
+          ['004','Critical dimensions for alignments/offsets'],
+          ['005','Hatches correctly reflect materials noted'],
+          ['006','2D information added; not unedited Revit output'],
+        ]},
+        { ref: 'A-600s', name: 'Door Schedules & Details', items: [
+          ['001','Door Type drafting view shows door slabs in project'],
+          ['002','Frame Type drafting view shows frames in project'],
+          ['003','Hardware sets noted in schedule'],
+          ['004','Head, jamb, sill details coordinated with project conditions'],
+        ]},
+        { ref: 'A-610s', name: 'Storefronts & Windows', items: [
+          ['001','Storefront Type Elevations with dims, glazing/frame, mullion layout, H/J/S details'],
+          ['003','Frame type and glazing types noted in elevations and general notes/legend'],
+          ['004','Head, jamb, sill details coordinated'],
+        ]},
+        { ref: 'A-700s', name: 'Stairs, Ramps & Elevators', items: [
+          ['003','Stair design — 7" max riser, 11" min tread, 1" inset/overlap at toe'],
+          ['004','Railing design — max ramp slope 1:12; railings at 1:20+'],
+          ['006','Sections with 2D information, notes, dimensions'],
+        ]},
+        { ref: 'A-800s', name: 'Exterior Details', items: [
+          ['003','Notes left-justified — leader from bottom on right, top on left'],
+          ['004','Notes specific to condition and contractor scope; no product names in drawings'],
+          ['005','Notes are sentences without end periods'],
+          ['006','Vertical dimensions and column grids/levels shown'],
+        ]},
+        { ref: 'AF001', name: 'Finish Schedule', items: [
+          ['001','Wall and Flooring Schedules with finish selections'],
+          ['002','Correct schedule view template used'],
+          ['003','Finish General Notes reviewed for applicability'],
+        ]},
+        { ref: 'AF101', name: 'Finish Plans', items: [
+          ['001','Correct view template (no building grid)'],
+          ['002','Finish tags on plans; separate plans for walls vs. floors'],
+          ['003','Finish tags correspond to schedules on AF001'],
+          ['004','Dimensions not used on Finish Plans'],
+          ['005','Material alignment identified; tag transitions coordinated'],
+        ]},
+        { ref: 'AQ001', name: 'Equipment Schedule', items: [
+          ['001','Equipment Schedule with tag, description, utilities'],
+          ['002','Supply/install responsibility noted (OFOI, OFCI, CFCI, CFOI)'],
+        ]},
+        { ref: 'AQ101', name: 'Equipment Plans', items: [
+          ['001','Correct view template used'],
+          ['002','Equipment locations, layouts, specialty clearances shown'],
+          ['003','Tags per equipment with leaders for clarity'],
+        ]},
+      ];
+
+
       // ── Upload flow ──────────────────────────────────────────────────────
       const queued = []; // [{file, type: 'spec'|'drawings'}]
 
       function autoDetectType(filename) {
         const s = filename.toLowerCase();
+        // Sheet number prefix pattern: A-001, E-205, ED501, S-101, M-301, etc.
+        if (/^[a-z]{1,3}[-_]?\d{2,}/.test(s)) return 'drawings';
+        // Explicit spec keywords
         if (/spec|manual|project.manual|masterspec|division|csi|pm[_\-\s]/.test(s)) return 'spec';
+        // Drawing keywords
         if (/draw|sheet|plan|floor|elevation|section|detail|structural|mechanical|electrical|plumbing|civil|landscape|cd[_\-\s]|dd[_\-\s]|sd[_\-\s]|dwg|revit/.test(s)) return 'drawings';
-        // fallback: first entry becomes spec, any subsequent becomes drawings
+        // Fallback: first entry becomes spec, any subsequent becomes drawings
         return queued.some(q => q.type === 'spec') ? 'drawings' : 'spec';
       }
 
@@ -1701,7 +2402,6 @@
             <span class="queued-file-icon">📄</span>
             <span class="queued-file-name" title="${esc(q.file.name)}">${esc(q.file.name)}</span>
             <span class="queued-file-size">${mb} MB</span>
-            <button class="queued-type-toggle ${chipClass}" onclick="toggleFileType(${i})">${chipLabel}</button>
             <button class="queued-remove" onclick="removeQueuedFile(${i})">✕</button>
           </div>`;
         }).join('');
@@ -1779,7 +2479,6 @@
         document.getElementById('upload-overlay').classList.remove('hidden');
         document.getElementById('workspace').style.display = 'none';
         document.getElementById('view-toggle').style.display = 'none';
-        document.getElementById('doc-mode-toggle').style.display = 'none';
         document.getElementById('session-note').style.display = 'none';
         // Restore analysis view state so next session starts clean
         setDocView('analysis');
@@ -1818,7 +2517,6 @@
         document.getElementById('queued-files').style.display = 'none';
         document.getElementById('analyze-btn').style.display = 'none';
         document.getElementById('cost-estimate').classList.remove('visible');
-        document.getElementById('scope-panel').style.display = 'none';
         document.getElementById('upload-progress').classList.add('active');
 
         const bar = document.getElementById('upload-bar');
@@ -1911,12 +2609,6 @@
             document.getElementById('upload-overlay').classList.add('hidden');
             document.getElementById('workspace').style.display = 'flex';
 
-            // Setup topbar
-            const modeToggle = document.getElementById('doc-mode-toggle');
-            modeToggle.style.display = 'flex';
-            document.getElementById('mode-spec').disabled = !state.filename;
-            document.getElementById('mode-drawings').disabled = !state.drawingFilename;
-
             updateTopbarMeta();
 
             // Show source PDF toggle and session note
@@ -1925,10 +2617,7 @@
             state.docView = 'analysis';
             setDocView('analysis');
 
-            // Start in the mode that was loaded first, or spec if both
-            const initialMode = state.filename ? 'spec' : 'drawings';
-            state.activeMode = initialMode;
-            applyDocMode(initialMode, true);
+            applyDocMode(null, true);
             renderAll();
 
             switchTabByName('grade');
@@ -1960,8 +2649,8 @@
         const search = document.getElementById('doc-search');
 
         if (view === 'source') {
-          const url = state.activeMode === 'spec' ? state.specObjectUrl : state.drawingsObjectUrl;
-          frame.src = url || '';
+          const url = (state.drawingFilename ? state.drawingsObjectUrl : state.specObjectUrl) || '';
+          frame.src = url;
           frame.classList.add('visible');
           scroll.style.display = 'none';
           bar.style.display = 'none';
@@ -1969,42 +2658,22 @@
         } else {
           frame.classList.remove('visible');
           scroll.style.display = '';
-          search.style.display = state.activeMode === 'spec' ? '' : 'none';
+          search.style.display = state.drawingFilename ? 'none' : '';
           renderAll();
         }
       }
 
-      // ── Doc mode switching ───────────────────────────────────────────────
+      // ── Post-analysis UI setup ───────────────────────────────────────────
       function switchDocMode(mode) {
-        if (mode === 'spec' && !state.filename) return;
-        if (mode === 'drawings' && !state.drawingFilename) return;
-
-        state.activeMode = mode;
-        applyDocMode(mode, false);
-        if (state.docView === 'source') {
-          // Swap the iframe to the correct document
-          const url = mode === 'spec' ? state.specObjectUrl : state.drawingsObjectUrl;
-          document.getElementById('pdf-frame').src = url || '';
-        } else {
-          renderAll();
-        }
+        // No-op: mode toggle removed
       }
-
       function applyDocMode(mode, skipTabSwitch) {
-        // Mode buttons
-        document.getElementById('mode-spec').classList.toggle('active', mode === 'spec');
-        document.getElementById('mode-drawings').classList.toggle('active', mode === 'drawings');
-
-        // Tab visibility
-        document.getElementById('tab-btn-sections').style.display = mode === 'spec' ? '' : 'none';
-        document.getElementById('tab-btn-sheets').style.display = mode === 'drawings' ? '' : 'none';
-
-        // Doc search visibility (spec only)
-        document.getElementById('doc-search').style.display = mode === 'spec' ? '' : 'none';
-
-        if (!skipTabSwitch) {
-          switchTabByName('issues');
-        }
+        // Sheets tab always visible; Sections tab hidden
+        const sheetsBtn = document.getElementById('tab-btn-sheets');
+        if (sheetsBtn) sheetsBtn.style.display = '';
+        // Doc search only for spec-only results
+        document.getElementById('doc-search').style.display = state.drawingFilename ? 'none' : '';
+        if (!skipTabSwitch) switchTabByName('grade');
       }
 
       function updateTopbarMeta() {
@@ -2016,16 +2685,16 @@
 
       // ── Render all ───────────────────────────────────────────────────────
       function renderAll() {
-        if (state.activeMode === 'spec') {
-          renderDocPane();
-          renderIssuesList();
-          renderSectionsTab();
-          renderGradeTab();
-        } else {
+        if (state.drawingFilename) {
           renderDrawingPane();
           renderDrawingIssuesList();
           renderSheetsTab();
           renderDrawingGradeTab();
+        } else {
+          renderDocPane();
+          renderIssuesList();
+          renderSectionsTab();
+          renderGradeTab();
         }
       }
 
@@ -2400,12 +3069,13 @@
         document.getElementById('sheets-list').innerHTML = html;
       }
 
-      // ── Spec grade tab ───────────────────────────────────────────────────
+      // ── Grade tab ────────────────────────────────────────────────────────
       function renderGradeTab() {
-        const grade = state.activeMode === 'spec' ? state.grade : state.drawingGrade;
-        renderGradeInto(grade, state.activeMode === 'spec'
-          ? `${state.sections.length} section${state.sections.length !== 1 ? 's' : ''} analyzed`
-          : `${state.drawingSheets.length} sheet${state.drawingSheets.length !== 1 ? 's' : ''} analyzed`
+        const grade = state.drawingFilename ? state.drawingGrade : state.grade;
+        const subtitle = state.drawingFilename
+          ? `${state.drawingSheets.length} sheet${state.drawingSheets.length !== 1 ? 's' : ''} analyzed`
+          : `${state.sections.length} section${state.sections.length !== 1 ? 's' : ''} analyzed`;
+        renderGradeInto(grade, subtitle
         );
       }
 
