@@ -1,0 +1,2986 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>QA/QC — Construction Document Review</title>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #f7f7f7;
+        color: #1a1a1a;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      /* ── Top bar ── */
+      .topbar {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 12px 20px;
+        border-bottom: 1px solid #e0e0e0;
+        background: #ffffff;
+        flex-shrink: 0;
+      }
+
+      .topbar-back {
+        font-size: 0.8rem;
+        color: #999999;
+        text-decoration: none;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        transition: color 0.15s;
+      }
+
+      .topbar-divider { width: 1px; height: 18px; background: #d0d0d0; }
+
+      .topbar-title {
+        font-size: 0.9rem;
+        font-weight: 500;
+        color: #111111;
+      }
+
+      .topbar-meta {
+        font-size: 0.78rem;
+        color: #aaaaaa;
+      }
+
+      /* ── Doc mode toggle ── */
+      .doc-mode-toggle {
+        display: flex;
+        gap: 2px;
+        background: #f0f0f0;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 2px;
+      }
+
+      .mode-btn {
+        font-size: 0.72rem;
+        font-weight: 500;
+        padding: 4px 12px;
+        border-radius: 4px;
+        border: none;
+        cursor: pointer;
+        background: transparent;
+        color: #aaaaaa;
+        transition: background 0.15s, color 0.15s;
+      }
+      .mode-btn:hover:not(:disabled) { color: #555; }
+      .mode-btn.active {
+        background: #ffffff;
+        color: #1a1a1a;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+      }
+      .mode-btn:disabled { opacity: 0.35; cursor: default; }
+
+      .topbar-actions {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .btn {
+        font-size: 0.78rem;
+        font-weight: 500;
+        padding: 6px 14px;
+        border-radius: 5px;
+        border: 1px solid #d0d0d0;
+        cursor: pointer;
+        transition: background 0.15s, border-color 0.15s;
+        background: #f4f4f4;
+        color: #333333;
+      }
+      .btn:hover { background: #e8e8e8; border-color: #c0c0c0; }
+
+      .btn-primary {
+        background: #e4f4ec;
+        color: #3dba6e;
+        border-color: #9ecfb4;
+      }
+      .btn-primary:hover { background: #d4eddf; border-color: #7abf9a; }
+
+      /* ── Upload overlay ── */
+      .upload-overlay {
+        position: fixed;
+        inset: 0;
+        background: #f7f7f7;
+        z-index: 100;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 0;
+        padding: 60px 16px 60px;
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: #141414 #f7f7f7;
+      }
+
+      .upload-overlay.hidden { display: none; }
+
+      .upload-overlay-back {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        font-size: 0.8rem;
+        color: #aaaaaa;
+        text-decoration: none;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        transition: color 0.15s;
+      }
+
+      .upload-heading {
+        font-size: 1rem;
+        font-weight: 500;
+        color: #1a1a1a;
+        margin-bottom: 6px;
+        text-align: center;
+      }
+
+      .upload-sub-heading {
+        font-size: 0.8rem;
+        color: #aaaaaa;
+        margin-bottom: 28px;
+        text-align: center;
+        line-height: 1.5;
+      }
+
+      /* ── Single upload zone ── */
+      .upload-zone {
+        width: 520px;
+        max-width: 100%;
+        border: 1px dashed #cccccc;
+        border-radius: 10px;
+        padding: 44px 40px;
+        text-align: center;
+        cursor: pointer;
+        transition: border-color 0.2s, background 0.2s;
+        position: relative;
+        margin-bottom: 16px;
+      }
+      .upload-zone:hover,
+      .upload-zone.drag-over { border-color: #b4b4b4; background: #f2f2f2; }
+      .upload-zone.drag-over  { border-color: #3dba6e; background: #edf8f2; }
+
+      .upload-zone input[type="file"] {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        cursor: pointer;
+        width: 100%;
+        height: 100%;
+      }
+
+      .upload-icon {
+        font-size: 2rem;
+        margin-bottom: 12px;
+        opacity: 0.3;
+      }
+
+      .upload-label {
+        font-size: 0.85rem;
+        color: #333333;
+        margin-bottom: 4px;
+      }
+
+      .upload-sublabel {
+        font-size: 0.75rem;
+        color: #bbbbbb;
+      }
+
+      /* ── Queued file list ── */
+      .queued-files {
+        width: 520px;
+        max-width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+
+      .queued-file-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        background: #ffffff;
+        border: 1px solid #e8e8e8;
+        border-radius: 7px;
+      }
+
+      .queued-file-icon { font-size: 1rem; opacity: 0.4; flex-shrink: 0; }
+
+      .queued-file-name {
+        flex: 1;
+        font-size: 0.8rem;
+        color: #333;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+      }
+
+      .queued-file-size {
+        font-size: 0.7rem;
+        color: #bbbbbb;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+
+      .queued-type-toggle {
+        font-size: 0.62rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding: 3px 10px;
+        border-radius: 4px;
+        cursor: pointer;
+        white-space: nowrap;
+        flex-shrink: 0;
+        transition: all 0.15s;
+      }
+      .queued-type-toggle.type-spec     { background: #edf4ff; color: #2060c0; border: 1px solid #a8c4f0; }
+      .queued-type-toggle.type-drawings { background: #fdf4e4; color: #a06000; border: 1px solid #e8c880; }
+
+      .queued-remove {
+        font-size: 0.8rem;
+        color: #cccccc;
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 2px 4px;
+        line-height: 1;
+        transition: color 0.15s;
+        flex-shrink: 0;
+      }
+      .queued-remove:hover { color: #888; }
+
+      /* ── Analyze button ── */
+      .analyze-all-btn {
+        font-size: 0.85rem;
+        font-weight: 600;
+        padding: 10px 32px;
+        border-radius: 6px;
+        border: 1px solid #9ecfb4;
+        background: #3dba6e;
+        color: #ffffff;
+        cursor: pointer;
+        transition: background 0.15s, opacity 0.15s;
+        margin-bottom: 20px;
+        letter-spacing: 0.02em;
+      }
+      .analyze-all-btn:hover:not(:disabled) { background: #34a860; }
+      .analyze-all-btn:disabled {
+        background: #d0d0d0;
+        border-color: #c0c0c0;
+        color: #ffffff;
+        cursor: default;
+        opacity: 0.6;
+      }
+
+      /* ── Progress bar (upload overlay) ── */
+      .upload-progress {
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+        width: 520px;
+        max-width: 100%;
+      }
+
+      .upload-progress.active { display: flex; }
+
+      .upload-progress-file {
+        font-size: 0.82rem;
+        color: #888888;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .upload-progress-icon { font-size: 1rem; opacity: 0.6; }
+
+      .upload-progress-bar-track {
+        width: 100%;
+        height: 3px;
+        background: #e8e8e8;
+        border-radius: 2px;
+        overflow: hidden;
+      }
+
+      .upload-progress-bar-fill {
+        height: 100%;
+        background: #3dba6e;
+        border-radius: 2px;
+        width: 0%;
+        transition: width 0.3s ease;
+      }
+
+      .upload-progress-bar-fill.error { background: #c05050; }
+
+      .upload-progress-status {
+        font-size: 0.75rem;
+        color: #aaaaaa;
+        text-align: center;
+      }
+
+      .upload-error-retry {
+        display: none;
+        margin-top: 4px;
+        font-size: 0.72rem;
+        color: #aaaaaa;
+        cursor: pointer;
+        text-decoration: underline;
+      }
+      .upload-error-retry:hover { color: #555; }
+
+      /* ── Scope panel ── */
+      .scope-panel {
+        width: 960px;
+        max-width: 100%;
+        margin-top: 36px;
+        border-top: 1px solid #e8e8e8;
+        padding-top: 28px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+
+      .scope-panel-label {
+        font-size: 0.62rem;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: #c0c0c0;
+        margin-bottom: 2px;
+      }
+
+      .scope-columns {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 16px;
+      }
+
+      .scope-col {
+        background: #ffffff;
+        border: 1px solid #e8e8e8;
+        border-radius: 8px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .scope-col-title {
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: #787878;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #e8e8e8;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .scope-col-title-dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: #3dba6e;
+        flex-shrink: 0;
+      }
+
+      .scope-item {
+        font-size: 0.75rem;
+        color: #aaaaaa;
+        line-height: 1.5;
+        display: flex;
+        gap: 8px;
+      }
+
+      .scope-item::before {
+        content: "—";
+        color: #555;
+        flex-shrink: 0;
+      }
+
+      .scope-item strong {
+        color: #8a8a8a;
+        font-weight: 500;
+      }
+
+      .scope-item-note {
+        margin-top: 4px;
+        padding: 8px 10px;
+        background: #f0f8f2;
+        border: 1px solid #a8d4a8;
+        border-radius: 5px;
+        color: #2a6e3a;
+      }
+      .scope-item-note::before { display: none; }
+      .scope-item-note strong { color: #1a6a2e; }
+
+      .scope-status-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        background: #e8f5ee;
+        border: 1px solid #b0d8c0;
+        border-radius: 6px;
+      }
+
+      .scope-status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #3dba6e;
+        opacity: 0.5;
+        flex-shrink: 0;
+      }
+
+      .scope-status-text {
+        font-size: 0.72rem;
+        color: #1a5a3a;
+        line-height: 1.5;
+      }
+
+      /* ── Main workspace ── */
+      .workspace {
+        flex: 1;
+        display: flex;
+        overflow: hidden;
+      }
+
+      /* ── Document pane ── */
+      .doc-pane {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        border-right: 1px solid #e8e8e8;
+        overflow: hidden;
+      }
+
+      .doc-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 16px;
+        border-bottom: 1px solid #e8e8e8;
+        background: #ffffff;
+        flex-shrink: 0;
+      }
+
+      .doc-toolbar-label {
+        font-size: 0.72rem;
+        color: #aaaaaa;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .doc-search {
+        margin-left: auto;
+        background: #f4f4f4;
+        border: 1px solid #d0d0d0;
+        border-radius: 5px;
+        padding: 5px 10px;
+        color: #333333;
+        font-size: 0.78rem;
+        width: 180px;
+        outline: none;
+      }
+      .doc-search:focus { border-color: #c0c0c0; }
+      .doc-search::placeholder { color: #bbbbbb; }
+
+      .doc-scroll {
+        flex: 1;
+        overflow-y: auto;
+        padding: 32px 40px;
+        scrollbar-width: thin;
+        scrollbar-color: #555 #f7f7f7;
+      }
+
+      /* ── Spec document rendering ── */
+      .spec-section {
+        margin-bottom: 36px;
+      }
+
+      .spec-section-number {
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #aaaaaa;
+        margin-bottom: 6px;
+      }
+
+      .spec-section-title {
+        font-size: 1rem;
+        font-weight: 600;
+        color: #141414;
+        margin-bottom: 16px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #e8e8e8;
+      }
+
+      .spec-clause {
+        margin-bottom: 12px;
+        line-height: 1.7;
+        font-size: 0.85rem;
+        color: #555555;
+        padding-left: 16px;
+        border-left: 2px solid transparent;
+        transition: border-color 0.15s;
+        cursor: default;
+      }
+
+      .spec-clause:hover {
+        border-left-color: #333;
+        color: #333333;
+      }
+
+      .spec-clause .clause-id {
+        color: #999999;
+        font-size: 0.78rem;
+        margin-right: 8px;
+        font-family: monospace;
+      }
+
+      /* ── Highlight states ── */
+      .highlight-error {
+        background: rgba(200, 50, 50, 0.08);
+        border-left-color: #dd8080 !important;
+        border-radius: 0 4px 4px 0;
+      }
+
+      .highlight-warn {
+        background: rgba(180, 130, 20, 0.08);
+        border-left-color: #d4a840 !important;
+        border-radius: 0 4px 4px 0;
+      }
+
+      .highlight-info {
+        background: rgba(40, 100, 180, 0.08);
+        border-left-color: #80aad8 !important;
+        border-radius: 0 4px 4px 0;
+      }
+
+      .clause-flash {
+        animation: clauseFlash 1.6s ease forwards;
+      }
+
+      @keyframes clauseFlash {
+        0%   { background: rgba(61, 186, 110, 0.25); border-left-color: #3dba6e !important; }
+        60%  { background: rgba(61, 186, 110, 0.12); }
+        100% { background: transparent; }
+      }
+
+      .inline-flag {
+        display: inline-block;
+        font-size: 0.65rem;
+        font-weight: 600;
+        padding: 1px 6px;
+        border-radius: 3px;
+        margin-left: 8px;
+        vertical-align: middle;
+        cursor: pointer;
+        letter-spacing: 0.04em;
+      }
+
+      .flag-error { background: #fdeaea; color: #c02020; border: 1px solid #e8a8a8; }
+      .flag-warn  { background: #fef5e0; color: #8a6000; border: 1px solid #e0c060; }
+      .flag-info  { background: #eef4fb; color: #1060c0; border: 1px solid #90b8e8; }
+
+      /* ── Drawing sheet detail (doc pane, drawings mode) ── */
+      .sheet-detail-card {
+        background: #ffffff;
+        border: 1px solid #e8e8e8;
+        border-radius: 8px;
+        padding: 24px 28px;
+        margin-bottom: 24px;
+      }
+
+      .sheet-detail-number {
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #aaaaaa;
+        margin-bottom: 6px;
+        font-family: monospace;
+      }
+
+      .sheet-detail-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #141414;
+        margin-bottom: 14px;
+      }
+
+      .sheet-detail-meta {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .discipline-badge {
+        font-size: 0.65rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding: 3px 10px;
+        border-radius: 4px;
+      }
+
+      .sheet-meta-chip {
+        font-size: 0.68rem;
+        color: #aaaaaa;
+        background: #f4f4f4;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        padding: 2px 8px;
+        font-family: monospace;
+      }
+
+      .sheet-issues-in-pane {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .sheet-issue-row {
+        padding: 12px 16px;
+        border-radius: 6px;
+        border-left: 3px solid transparent;
+        background: #f8f8f8;
+      }
+      .sheet-issue-row.type-error  { border-left-color: #dd8080; background: rgba(200,50,50,0.05); }
+      .sheet-issue-row.type-warning{ border-left-color: #d4a840; background: rgba(180,130,20,0.05); }
+      .sheet-issue-row.type-note   { border-left-color: #80aad8; background: rgba(40,100,180,0.05); }
+
+      .sheet-issue-desc {
+        font-size: 0.82rem;
+        color: #444;
+        line-height: 1.5;
+        margin-bottom: 4px;
+      }
+
+      .sheet-issue-detail {
+        font-size: 0.74rem;
+        color: #888;
+        line-height: 1.5;
+      }
+
+      /* ── Right panel ── */
+      .right-panel {
+        width: 380px;
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+        background: #ffffff;
+        overflow: hidden;
+      }
+
+      .panel-tabs {
+        display: flex;
+        border-bottom: 1px solid #e8e8e8;
+        flex-shrink: 0;
+      }
+
+      .panel-tab {
+        flex: 1;
+        padding: 12px 8px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        color: #aaaaaa;
+        text-align: center;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        letter-spacing: 0.04em;
+        transition: color 0.15s;
+        user-select: none;
+      }
+
+      .panel-tab:hover { color: #777; }
+
+      .panel-tab.active {
+        color: #1a1a1a;
+        border-bottom-color: #3dba6e;
+      }
+
+      /* ── Issues tab ── */
+      .tab-content { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+      .tab-content.active { display: flex; }
+
+      .issues-summary {
+        display: flex;
+        gap: 8px;
+        padding: 12px 16px;
+        border-bottom: 1px solid #e8e8e8;
+        flex-shrink: 0;
+      }
+
+      .issue-count {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        padding: 4px 10px;
+        border-radius: 4px;
+      }
+
+      .issue-count-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+      }
+
+      .count-error { background: #fdf3f3; color: #b02020; }
+      .count-error .issue-count-dot { background: #c05050; }
+
+      .count-warn { background: #fef8ed; color: #7a5000; }
+      .count-warn .issue-count-dot { background: #a07828; }
+
+      .count-info { background: #eef4fb; color: #1858a8; }
+      .count-info .issue-count-dot { background: #4878b8; }
+
+      .issues-list {
+        flex: 1;
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: #555 #f7f7f7;
+      }
+
+      .issue-item {
+        padding: 12px 16px;
+        border-bottom: 1px solid #ebebeb;
+        cursor: pointer;
+        transition: background 0.12s;
+      }
+
+      .issue-item:hover { background: #efefef; }
+      .issue-item.selected { background: #efefef; }
+
+      .issue-item-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 5px;
+      }
+
+      .issue-type-badge {
+        font-size: 0.6rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding: 2px 6px;
+        border-radius: 3px;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+
+      .badge-error { background: #fdeaea; color: #c02020; }
+      .badge-warn  { background: #fef5e0; color: #8a6000; }
+      .badge-info  { background: #eef4fb; color: #1060c0; }
+
+      .issue-location {
+        font-size: 0.68rem;
+        color: #aaaaaa;
+        font-family: monospace;
+      }
+
+      .issue-desc {
+        font-size: 0.8rem;
+        color: #555555;
+        line-height: 1.5;
+        margin-bottom: 6px;
+      }
+
+      .issue-clause-preview {
+        font-size: 0.72rem;
+        color: #aaaaaa;
+        font-style: italic;
+        line-height: 1.4;
+        padding: 6px 8px;
+        background: #f6f6f6;
+        border-radius: 4px;
+        border-left: 2px solid #d0d0d0;
+      }
+
+      .issue-actions {
+        display: flex;
+        gap: 6px;
+        margin-top: 8px;
+      }
+
+      .issue-btn {
+        font-size: 0.68rem;
+        padding: 3px 8px;
+        border-radius: 4px;
+        border: 1px solid #d8d8d8;
+        background: #ededed;
+        color: #787878;
+        cursor: pointer;
+        transition: color 0.12s, border-color 0.12s;
+      }
+      .issue-btn:hover { color: #333333; border-color: #c0c0c0; }
+
+      /* ── Ask tab ── */
+      .chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        scrollbar-width: thin;
+        scrollbar-color: #555 #f7f7f7;
+      }
+
+      .msg {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        max-width: 100%;
+      }
+
+      .msg-role {
+        font-size: 0.65rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #aaaaaa;
+      }
+
+      .msg-bubble {
+        font-size: 0.82rem;
+        line-height: 1.6;
+        color: #333333;
+        background: #efefef;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 10px 12px;
+      }
+
+      .msg.assistant .msg-bubble {
+        background: #ffffff;
+        border-color: #141414;
+      }
+
+      .suggested-questions {
+        padding: 12px 16px;
+        border-top: 1px solid #e8e8e8;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        flex-shrink: 0;
+      }
+
+      .suggested-label {
+        font-size: 0.65rem;
+        color: #bbbbbb;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        margin-bottom: 2px;
+      }
+
+      .suggested-q {
+        font-size: 0.75rem;
+        color: #999999;
+        background: #f2f2f2;
+        border: 1px solid #e8e8e8;
+        border-radius: 5px;
+        padding: 6px 10px;
+        cursor: pointer;
+        transition: color 0.12s, border-color 0.12s, background 0.12s;
+        text-align: left;
+      }
+
+      .suggested-q:hover { color: #333333; border-color: #222222; background: #ededed; }
+
+      .chat-input-area {
+        padding: 12px 16px;
+        border-top: 1px solid #e8e8e8;
+        flex-shrink: 0;
+      }
+
+      .chat-input-row {
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+      }
+
+      .chat-input {
+        flex: 1;
+        background: #f4f4f4;
+        border: 1px solid #d0d0d0;
+        border-radius: 6px;
+        padding: 8px 12px;
+        color: #333333;
+        font-size: 0.82rem;
+        resize: none;
+        outline: none;
+        line-height: 1.5;
+        min-height: 38px;
+        max-height: 100px;
+        font-family: inherit;
+      }
+      .chat-input:focus { border-color: #c0c0c0; }
+      .chat-input::placeholder { color: #bbbbbb; }
+
+      .send-btn {
+        background: #e4f4ec;
+        color: #3dba6e;
+        border: 1px solid #9ecfb4;
+        border-radius: 6px;
+        padding: 8px 14px;
+        font-size: 0.78rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background 0.15s;
+        white-space: nowrap;
+      }
+      .send-btn:hover { background: #d4eddf; }
+
+      /* ── Empty state ── */
+      .empty-state {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        color: #bbbbbb;
+        font-size: 0.82rem;
+        text-align: center;
+        padding: 24px;
+      }
+
+      .empty-icon { font-size: 1.6rem; opacity: 0.3; }
+
+      /* ── Scrollbar ── */
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: #d0d0d0; border-radius: 3px; }
+
+      /* ── Analyze bar ── */
+      .analyze-bar {
+        padding: 10px 16px;
+        border-bottom: 1px solid #e8e8e8;
+        background: #edf9f3;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-shrink: 0;
+        font-size: 0.75rem;
+        color: #3dba6e;
+      }
+
+      .analyze-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #3dba6e;
+        flex-shrink: 0;
+      }
+
+      /* ── Grade tab ── */
+      .grade-scroll {
+        flex: 1;
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: #555 #f7f7f7;
+      }
+
+      .grade-hero {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        padding: 20px 18px;
+        border-bottom: 1px solid #e8e8e8;
+        background: #f8f8f8;
+      }
+
+      .grade-letter {
+        font-size: 3rem;
+        font-weight: 700;
+        line-height: 1;
+        width: 64px;
+        text-align: center;
+        flex-shrink: 0;
+      }
+
+      .grade-hero-right {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+
+      .grade-score-label {
+        font-size: 0.65rem;
+        color: #aaaaaa;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .grade-score-num {
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: #1a1a1a;
+        line-height: 1.2;
+      }
+
+      .grade-scope {
+        font-size: 0.7rem;
+        color: #bbbbbb;
+        margin-top: 2px;
+        line-height: 1.4;
+      }
+
+      .grade-explainer {
+        border-bottom: 1px solid #e8e8e8;
+      }
+
+      .grade-explainer-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 18px;
+        font-size: 0.75rem;
+        color: #999999;
+        cursor: pointer;
+        user-select: none;
+        transition: color 0.15s;
+      }
+      .grade-explainer-header:hover { color: #777; }
+
+      .grade-explainer-arrow { font-size: 0.7rem; transition: transform 0.2s; }
+      .grade-explainer-header.open .grade-explainer-arrow { transform: rotate(180deg); }
+
+      .grade-explainer-body {
+        display: none;
+        padding: 0 18px 14px;
+        font-size: 0.77rem;
+        color: #999999;
+        line-height: 1.6;
+        border-top: 1px solid #ededed;
+      }
+      .grade-explainer-body.open { display: block; }
+
+      .grade-metrics {
+        padding: 16px 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+      }
+
+      .grade-metric-group-label {
+        font-size: 0.65rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #bbbbbb;
+        margin-bottom: 10px;
+      }
+
+      .grade-metric {
+        margin-bottom: 18px;
+        padding-bottom: 18px;
+        border-bottom: 1px solid #ededed;
+      }
+      .grade-metric:last-child { border-bottom: none; }
+
+      .grade-metric-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 8px;
+        margin-bottom: 7px;
+      }
+
+      .grade-metric-name {
+        font-size: 0.8rem;
+        font-weight: 500;
+        color: #222222;
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+      }
+
+      .grade-metric-weight {
+        font-size: 0.65rem;
+        color: #bbbbbb;
+        font-weight: 400;
+      }
+
+      .grade-metric-score {
+        font-size: 0.78rem;
+        font-weight: 600;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+      .grade-metric-score.good { color: #3dba6e; }
+      .grade-metric-score.warn { color: #8a6000; }
+      .grade-metric-score.bad  { color: #b02020; }
+
+      .grade-bar-track {
+        height: 4px;
+        background: #e8e8e8;
+        border-radius: 2px;
+        margin-bottom: 8px;
+        overflow: hidden;
+      }
+
+      .grade-bar-fill {
+        height: 100%;
+        border-radius: 2px;
+        transition: width 0.6s ease;
+      }
+      .grade-bar-fill.good { background: #3dba6e; }
+      .grade-bar-fill.warn { background: #c89020; }
+      .grade-bar-fill.bad  { background: #b02020; }
+
+      .grade-metric-detail {
+        font-size: 0.75rem;
+        color: #888888;
+        line-height: 1.5;
+        margin-bottom: 8px;
+      }
+
+      .grade-metric-findings {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .grade-finding {
+        font-size: 0.73rem;
+        padding: 6px 10px;
+        border-radius: 4px;
+        border-left: 2px solid transparent;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 10px;
+        line-height: 1.4;
+      }
+
+      .grade-finding-error { background: #fdf3f3; color: #a02020; border-left: 2px solid #6a2020; }
+      .grade-finding-warn  { background: #fef8ed; color: #8a6828; border-left: 2px solid #4a3810; }
+      .grade-finding-ok    { background: #edf8f2; color: #3a8a50; border-left: 2px solid #1a4a28; }
+
+      .grade-finding-pts {
+        font-size: 0.68rem;
+        opacity: 0.7;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+
+      .grade-override-note {
+        margin: 0 18px 20px;
+        padding: 10px 12px;
+        background: #f2f2f2;
+        border: 1px solid #e0e0e0;
+        border-radius: 5px;
+        font-size: 0.72rem;
+        color: #aaaaaa;
+        line-height: 1.5;
+      }
+
+      /* ── Raw text fallback in doc pane ── */
+      .section-raw-text {
+        white-space: pre-wrap;
+        font-size: 0.82rem;
+        color: #555;
+        line-height: 1.7;
+        font-family: inherit;
+      }
+
+      /* ── Cycling info panel ── */
+      .cycle-panel {
+        width: 900px;
+        max-width: calc(100vw - 32px);
+        margin-top: 36px;
+        border-top: 1px solid #e8e8e8;
+        padding-top: 28px;
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+      }
+
+      .cycle-slide-area {
+        background: #ffffff;
+        border: 1px solid #e8e8e8;
+        border-radius: 10px;
+        padding: 28px 32px 24px;
+        min-height: 148px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .cycle-slide {
+        position: absolute;
+        inset: 0;
+        padding: 28px 32px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        opacity: 0;
+        transform: translateX(24px);
+        transition: opacity 0.35s ease, transform 0.35s ease;
+        pointer-events: none;
+      }
+
+      .cycle-slide.active {
+        opacity: 1;
+        transform: translateX(0);
+        pointer-events: auto;
+      }
+
+      .cycle-slide.exit {
+        opacity: 0;
+        transform: translateX(-24px);
+      }
+
+      .cycle-slide-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .cycle-cat {
+        font-size: 0.62rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        padding: 3px 10px;
+        border-radius: 4px;
+      }
+      .cat-spec     { background: #edf4ff; color: #2060c0; border: 1px solid #a8c4f0; }
+      .cat-drawings { background: #fdf4e4; color: #a06000; border: 1px solid #e8c880; }
+      .cat-process  { background: #edf8f2; color: #1a6030; border: 1px solid #88c898; }
+
+      .cycle-metric {
+        font-size: 0.68rem;
+        font-weight: 600;
+        color: #bbbbbb;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+      }
+
+      .cycle-slide-title {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: #141414;
+        line-height: 1.3;
+      }
+
+      .cycle-slide-body {
+        font-size: 0.8rem;
+        color: #777777;
+        line-height: 1.65;
+      }
+
+      .cycle-nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 4px 0;
+      }
+
+      .cycle-dots {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+
+      .cycle-dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: #d0d0d0;
+        cursor: pointer;
+        transition: background 0.2s, transform 0.2s;
+        flex-shrink: 0;
+      }
+      .cycle-dot.active { background: #3dba6e; transform: scale(1.3); }
+
+      .cycle-arrows {
+        display: flex;
+        gap: 6px;
+      }
+
+      .cycle-arrow {
+        font-size: 0.75rem;
+        color: #bbbbbb;
+        background: none;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        width: 26px;
+        height: 26px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s;
+      }
+      .cycle-arrow:hover { color: #555; border-color: #c0c0c0; }
+
+      .cycle-backend-note {
+        margin-top: 16px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        background: #e8f5ee;
+        border: 1px solid #b0d8c0;
+        border-radius: 6px;
+      }
+
+      .cycle-backend-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #3dba6e;
+        opacity: 0.5;
+        flex-shrink: 0;
+      }
+
+      .cycle-backend-text {
+        font-size: 0.72rem;
+        color: #1a5a3a;
+        line-height: 1.5;
+      }
+
+      /* ── Session warning in topbar ── */
+      .session-note {
+        font-size: 0.7rem;
+        color: #bbbbbb;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        white-space: nowrap;
+      }
+      .session-note-dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: #d0b060;
+        flex-shrink: 0;
+      }
+
+      /* ── Doc view toggle (Analysis / Source PDF) ── */
+      .view-toggle {
+        display: flex;
+        gap: 2px;
+        background: #f0f0f0;
+        border: 1px solid #e0e0e0;
+        border-radius: 5px;
+        padding: 2px;
+        margin-left: auto;
+        margin-right: 10px;
+        flex-shrink: 0;
+      }
+
+      .view-btn {
+        font-size: 0.7rem;
+        font-weight: 500;
+        padding: 3px 10px;
+        border-radius: 3px;
+        border: none;
+        cursor: pointer;
+        background: transparent;
+        color: #aaaaaa;
+        transition: background 0.15s, color 0.15s;
+        white-space: nowrap;
+      }
+      .view-btn:hover { color: #555; }
+      .view-btn.active {
+        background: #ffffff;
+        color: #1a1a1a;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+      }
+
+      .pdf-frame {
+        flex: 1;
+        border: none;
+        display: none;
+        background: #f0f0f0;
+      }
+      .pdf-frame.visible { display: block; }
+
+      /* ── Cost estimate ── */
+      .cost-estimate {
+        display: none;
+        font-size: 0.74rem;
+        color: #999999;
+        text-align: center;
+        margin-top: -8px;
+        margin-bottom: 8px;
+        line-height: 1.5;
+      }
+      .cost-estimate.visible { display: block; }
+      .cost-est-amount { color: #555; font-weight: 500; }
+    </style>
+  </head>
+  <body>
+
+    <!-- Top bar -->
+    <div class="topbar">
+      <a class="topbar-back" href="index.html">← StudioOS</a>
+      <div class="topbar-divider"></div>
+      <span class="topbar-title">QA/QC — Document Review</span>
+      <span class="topbar-meta" id="topbar-meta">No documents loaded</span>
+      <div class="doc-mode-toggle" id="doc-mode-toggle" style="display:none">
+        <button class="mode-btn active" id="mode-spec" onclick="switchDocMode('spec')" disabled>Spec</button>
+        <button class="mode-btn" id="mode-drawings" onclick="switchDocMode('drawings')" disabled>Drawings</button>
+      </div>
+      <div class="topbar-actions">
+        <div class="session-note" id="session-note" style="display:none">
+          <div class="session-note-dot"></div>
+          Session only — export before closing
+        </div>
+        <button class="btn" onclick="exportReport()">Export Report</button>
+        <button class="btn" onclick="showUpload()">Load Documents</button>
+      </div>
+    </div>
+
+    <!-- Upload overlay -->
+    <div class="upload-overlay" id="upload-overlay">
+      <a class="upload-overlay-back" href="index.html">← StudioOS</a>
+
+      <div class="upload-heading">Load documents for review</div>
+      <div class="upload-sub-heading">
+        Upload a specification, a drawing set, or both.<br>
+        Either works independently — upload both for cross-document coordination analysis.
+      </div>
+
+      <!-- Single upload zone -->
+      <div class="upload-zone" id="upload-zone"
+           ondragover="onDragOver(event)" ondragleave="onDragLeave()"
+           ondrop="onDrop(event)">
+        <input type="file" accept=".pdf" multiple id="upload-file-input"
+               onchange="onFileSelect(event)" />
+        <div class="upload-icon">⬆</div>
+        <div class="upload-label">Drop PDFs here, or click to browse</div>
+        <div class="upload-sublabel">Specification, drawing set, or both</div>
+      </div>
+
+      <!-- Queued file list -->
+      <div class="queued-files" id="queued-files" style="display:none"></div>
+
+      <button class="analyze-all-btn" id="analyze-btn" disabled onclick="runPendingAnalysis()">
+        Analyze Documents
+      </button>
+
+      <div class="cost-estimate" id="cost-estimate">
+        Estimated API cost: <span class="cost-est-amount" id="cost-amount">—</span> &nbsp;·&nbsp; uses your Anthropic API key
+      </div>
+
+      <!-- Progress (shown during analysis) -->
+      <div class="upload-progress" id="upload-progress">
+        <div class="upload-progress-file">
+          <span class="upload-progress-icon">📄</span>
+          <span id="upload-filename">Processing…</span>
+        </div>
+        <div class="upload-progress-bar-track">
+          <div class="upload-progress-bar-fill" id="upload-bar"></div>
+        </div>
+        <div class="upload-progress-status" id="upload-status">Starting…</div>
+        <div class="upload-error-retry" id="upload-retry" onclick="resetUpload()">← Try again</div>
+      </div>
+
+      <!-- Cycling info panel -->
+      <div class="cycle-panel" id="scope-panel">
+        <div class="cycle-slide-area" id="cycle-slide-area">
+          <!-- slides injected by JS -->
+        </div>
+        <div class="cycle-nav">
+          <div class="cycle-dots" id="cycle-dots"></div>
+          <div class="cycle-arrows">
+            <button class="cycle-arrow" onclick="cyclePrev()">←</button>
+            <button class="cycle-arrow" onclick="cycleNext()">→</button>
+          </div>
+        </div>
+        <div class="cycle-backend-note">
+          <div class="cycle-backend-dot"></div>
+          <div class="cycle-backend-text">
+            Requires the Python backend to be running locally: <strong>py -m uvicorn server:app --reload</strong>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Workspace -->
+    <div class="workspace" id="workspace" style="display:none">
+
+      <!-- Document pane (shared by both modes, content switches) -->
+      <div class="doc-pane">
+        <div class="doc-toolbar">
+          <span class="doc-toolbar-label" id="doc-section-label">Select a section</span>
+          <div class="view-toggle" id="view-toggle" style="display:none">
+            <button class="view-btn active" id="view-btn-analysis" onclick="setDocView('analysis')">Analysis</button>
+            <button class="view-btn" id="view-btn-source" onclick="setDocView('source')">Source PDF</button>
+          </div>
+          <input class="doc-search" placeholder="Search…" type="text" id="doc-search"
+                 oninput="onDocSearch()" />
+        </div>
+        <div class="analyze-bar" id="analyze-bar" style="display:none">
+          <div class="analyze-dot"></div>
+          <span id="analyze-bar-text"></span>
+        </div>
+        <div class="doc-scroll" id="doc-scroll">
+          <div class="empty-state">
+            <div class="empty-icon">📄</div>
+            Select a section from the Sections tab
+          </div>
+        </div>
+        <iframe class="pdf-frame" id="pdf-frame" title="Source document"></iframe>
+      </div>
+
+      <!-- Right panel -->
+      <div class="right-panel">
+        <div class="panel-tabs" id="panel-tabs">
+          <div class="panel-tab" id="tab-btn-issues" onclick="switchTab('issues', this)">Issues</div>
+          <div class="panel-tab" id="tab-btn-sheets" onclick="switchTab('sheets', this)" style="display:none">Sheets</div>
+          <div class="panel-tab" id="tab-btn-ask" onclick="switchTab('ask', this)">Ask</div>
+          <div class="panel-tab" id="tab-btn-sections" onclick="switchTab('sections', this)">Sections</div>
+          <div class="panel-tab active" id="tab-btn-grade" onclick="switchTab('grade', this)">Grade</div>
+        </div>
+
+        <!-- Issues tab -->
+        <div class="tab-content" id="tab-issues">
+          <div class="issues-summary" id="issues-summary"></div>
+          <div class="issues-list" id="issues-list">
+            <div class="empty-state">
+              <div class="empty-icon">✓</div>
+              Select a section to view its issues
+            </div>
+          </div>
+        </div>
+
+        <!-- Sheets tab (drawings mode) -->
+        <div class="tab-content" id="tab-sheets">
+          <div class="issues-list" id="sheets-list">
+            <div class="empty-state">
+              <div class="empty-icon">📐</div>
+              No drawing set loaded
+            </div>
+          </div>
+        </div>
+
+        <!-- Ask tab -->
+        <div class="tab-content" id="tab-ask">
+          <div class="chat-messages" id="chat-messages"></div>
+          <div class="suggested-questions" id="suggested-questions">
+            <div class="suggested-label">Suggested</div>
+            <button class="suggested-q" onclick="addQuestion(this)">Are there any conflicts between sections?</button>
+            <button class="suggested-q" onclick="addQuestion(this)">Which standards references are outdated?</button>
+            <button class="suggested-q" onclick="addQuestion(this)">Summarize all submittal requirements.</button>
+          </div>
+          <div class="chat-input-area">
+            <div class="chat-input-row">
+              <textarea class="chat-input" id="chat-input" placeholder="Ask about these documents…" rows="1"
+                onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage();}"></textarea>
+              <button class="send-btn" onclick="sendMessage()">Send</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sections tab (spec mode) -->
+        <div class="tab-content" id="tab-sections">
+          <div class="issues-list" id="sections-list">
+            <div class="empty-state">
+              <div class="empty-icon">📋</div>
+              No specification loaded
+            </div>
+          </div>
+        </div>
+
+        <!-- Grade tab -->
+        <div class="tab-content active" id="tab-grade">
+          <div class="grade-scroll" id="grade-content">
+            <div class="empty-state">
+              <div class="empty-icon">📊</div>
+              Grade will appear after analysis
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const API = '';
+
+      // ── Pending upload state ─────────────────────────────────────────────
+      const pending = { spec: null, drawings: null };
+
+      // ── Analysis state ───────────────────────────────────────────────────
+      const state = {
+        // Spec
+        filename: null,
+        sections: [],
+        issues: [],
+        grade: {},
+        currentSection: null,
+        dismissed: new Set(),
+
+        // Drawings
+        drawingFilename: null,
+        drawingTotalPages: 0,
+        drawingSheets: [],
+        drawingIssues: [],
+        drawingGrade: {},
+        currentSheet: null,
+        drawingDismissed: new Set(),
+
+        // Shared
+        activeMode: 'spec',
+        docView: 'analysis',   // 'analysis' | 'source'
+        specObjectUrl: null,
+        drawingsObjectUrl: null,
+        chatHistory: [],
+      };
+
+      // ── Escape helpers ───────────────────────────────────────────────────
+      function esc(s) {
+        if (s == null) return '';
+        return String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function escAttr(s) {
+        if (s == null) return '';
+        return String(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      }
+
+      function clauseElId(clauseId) {
+        return 'clause-' + String(clauseId).replace(/\./g, '_');
+      }
+
+      // ── Upload flow ──────────────────────────────────────────────────────
+      const queued = []; // [{file, type: 'spec'|'drawings'}]
+
+      function autoDetectType(filename) {
+        const s = filename.toLowerCase();
+        if (/spec|manual|project.manual|masterspec|division|csi|pm[_\-\s]/.test(s)) return 'spec';
+        if (/draw|sheet|plan|floor|elevation|section|detail|structural|mechanical|electrical|plumbing|civil|landscape|cd[_\-\s]|dd[_\-\s]|sd[_\-\s]|dwg|revit/.test(s)) return 'drawings';
+        // fallback: first entry becomes spec, any subsequent becomes drawings
+        return queued.some(q => q.type === 'spec') ? 'drawings' : 'spec';
+      }
+
+      function renderQueuedFiles() {
+        const el = document.getElementById('queued-files');
+        if (!queued.length) { el.style.display = 'none'; return; }
+        el.style.display = 'flex';
+        el.innerHTML = queued.map((q, i) => {
+          const mb = (q.file.size / 1024 / 1024).toFixed(1);
+          const isSpec = q.type === 'spec';
+          const chipClass = isSpec ? 'type-spec' : 'type-drawings';
+          const chipLabel = isSpec ? 'Specification' : 'Drawing Set';
+          return `<div class="queued-file-row">
+            <span class="queued-file-icon">📄</span>
+            <span class="queued-file-name" title="${esc(q.file.name)}">${esc(q.file.name)}</span>
+            <span class="queued-file-size">${mb} MB</span>
+            <button class="queued-type-toggle ${chipClass}" onclick="toggleFileType(${i})">${chipLabel}</button>
+            <button class="queued-remove" onclick="removeQueuedFile(${i})">✕</button>
+          </div>`;
+        }).join('');
+      }
+
+      function toggleFileType(idx) {
+        queued[idx].type = queued[idx].type === 'spec' ? 'drawings' : 'spec';
+        renderQueuedFiles();
+        updateCostEstimate();
+      }
+
+      function removeQueuedFile(idx) {
+        queued.splice(idx, 1);
+        renderQueuedFiles();
+        document.getElementById('analyze-btn').disabled = queued.length === 0;
+        updateCostEstimate();
+        // Reset file input so same file can be re-added
+        document.getElementById('upload-file-input').value = '';
+      }
+
+      function onDragOver(e) {
+        e.preventDefault();
+        document.getElementById('upload-zone').classList.add('drag-over');
+      }
+      function onDragLeave() {
+        document.getElementById('upload-zone').classList.remove('drag-over');
+      }
+      function onDrop(e) {
+        e.preventDefault();
+        document.getElementById('upload-zone').classList.remove('drag-over');
+        addFiles(e.dataTransfer.files);
+      }
+      function onFileSelect(e) {
+        addFiles(e.target.files);
+      }
+
+      function addFiles(fileList) {
+        for (const file of fileList) {
+          if (!file.name.match(/\.pdf$/i)) { alert(`${file.name} is not a PDF.`); continue; }
+          if (queued.length >= 2) { alert('Maximum two files at a time — remove one first.'); break; }
+          // Prevent duplicate
+          if (queued.some(q => q.file.name === file.name && q.file.size === file.size)) continue;
+          queued.push({ file, type: autoDetectType(file.name) });
+        }
+        renderQueuedFiles();
+        document.getElementById('analyze-btn').disabled = queued.length === 0;
+        updateCostEstimate();
+      }
+
+      function estimateCostCents() {
+        let cents = 0;
+        for (const q of queued) {
+          const mb = q.file.size / 1024 / 1024;
+          if (q.type === 'spec')      cents += Math.max(8, Math.round(mb * 10));
+          else                        cents += Math.round(15 + mb * 5);
+        }
+        return cents;
+      }
+
+      function updateCostEstimate() {
+        const cents = estimateCostCents();
+        const el = document.getElementById('cost-estimate');
+        const amountEl = document.getElementById('cost-amount');
+        if (cents === 0) { el.classList.remove('visible'); return; }
+
+        const dollars = cents / 100;
+        // Show as range ±40%
+        const lo = (dollars * 0.6).toFixed(2);
+        const hi = (dollars * 1.4).toFixed(2);
+        amountEl.textContent = `~$${lo}–$${hi}`;
+        el.classList.add('visible');
+      }
+
+      function showUpload() {
+        document.getElementById('upload-overlay').classList.remove('hidden');
+        document.getElementById('workspace').style.display = 'none';
+        document.getElementById('view-toggle').style.display = 'none';
+        document.getElementById('doc-mode-toggle').style.display = 'none';
+        document.getElementById('session-note').style.display = 'none';
+        // Restore analysis view state so next session starts clean
+        setDocView('analysis');
+        resetUpload();
+      }
+
+      function resetUpload() {
+        queued.length = 0;
+        renderQueuedFiles();
+
+        document.getElementById('upload-zone').classList.remove('drag-over');
+        document.getElementById('upload-zone').style.display = '';
+        document.getElementById('upload-file-input').value = '';
+
+        document.getElementById('analyze-btn').disabled = true;
+        document.getElementById('analyze-btn').style.display = '';
+        document.getElementById('scope-panel').style.display = '';
+        document.getElementById('upload-progress').classList.remove('active');
+
+        const bar = document.getElementById('upload-bar');
+        bar.style.width = '0%';
+        bar.classList.remove('error');
+        document.getElementById('upload-status').style.color = '';
+        document.getElementById('upload-retry').style.display = 'none';
+        document.getElementById('cost-estimate').classList.remove('visible');
+      }
+
+      async function runPendingAnalysis() {
+        if (!queued.length) return;
+
+        const pendingSpec     = queued.find(q => q.type === 'spec')?.file || null;
+        const pendingDrawings = queued.find(q => q.type === 'drawings')?.file || null;
+
+        // Hide upload area, show progress
+        document.getElementById('upload-zone').style.display = 'none';
+        document.getElementById('queued-files').style.display = 'none';
+        document.getElementById('analyze-btn').style.display = 'none';
+        document.getElementById('cost-estimate').classList.remove('visible');
+        document.getElementById('scope-panel').style.display = 'none';
+        document.getElementById('upload-progress').classList.add('active');
+
+        const bar = document.getElementById('upload-bar');
+        const status = document.getElementById('upload-status');
+        const filenameEl = document.getElementById('upload-filename');
+
+        const hasSpec     = !!pendingSpec;
+        const hasDrawings = !!pendingDrawings;
+        const specShare   = hasSpec && hasDrawings ? 50 : 100;
+
+        try {
+          // ── Spec ──────────────────────────────────────────────────────
+          if (hasSpec) {
+            filenameEl.textContent = pendingSpec.name;
+            bar.style.width = '8%';
+            status.textContent = 'Uploading specification…';
+
+            const fd = new FormData();
+            fd.append('file', pendingSpec);
+
+            bar.style.width = (specShare * 0.25) + '%';
+            status.textContent = 'Extracting text from specification…';
+
+            const resp = await fetch(`${API}/upload`, { method: 'POST', body: fd });
+            if (!resp.ok) {
+              const e = await resp.json().catch(() => ({ detail: resp.statusText }));
+              throw new Error(e.detail || 'Spec upload failed');
+            }
+            const data = await resp.json();
+
+            bar.style.width = specShare + '%';
+            status.textContent = hasDrawings
+              ? 'Specification analyzed. Processing drawing set…'
+              : 'Specification analysis complete.';
+
+            state.filename = data.filename;
+            state.sections = data.sections;
+            state.issues = data.issues;
+            state.grade = data.grade;
+            state.currentSection = data.sections[0]?.number || null;
+            state.dismissed = new Set();
+          }
+
+          // ── Drawings ───────────────────────────────────────────────────
+          if (hasDrawings) {
+            filenameEl.textContent = pendingDrawings.name;
+            const base = hasSpec ? 50 : 0;
+            bar.style.width = (base + 5) + '%';
+            status.textContent = 'Uploading drawing set…';
+
+            const fd = new FormData();
+            fd.append('file', pendingDrawings);
+
+            bar.style.width = (base + 15) + '%';
+            status.textContent = 'Extracting and visually analyzing drawings (this may take 30–60 s)…';
+
+            const resp = await fetch(`${API}/upload-drawings`, { method: 'POST', body: fd });
+            if (!resp.ok) {
+              const e = await resp.json().catch(() => ({ detail: resp.statusText }));
+              throw new Error(e.detail || 'Drawing upload failed');
+            }
+            const data = await resp.json();
+
+            bar.style.width = '95%';
+            status.textContent = 'Drawing set analysis complete.';
+
+            state.drawingFilename = data.filename;
+            state.drawingTotalPages = data.total_pages;
+            state.drawingSheets = data.sheets;
+            state.drawingIssues = data.issues;
+            state.drawingGrade = data.grade;
+            state.currentSheet = data.sheets[0]?.number || null;
+            state.drawingDismissed = new Set();
+          }
+
+          bar.style.width = '100%';
+          status.textContent = 'Analysis complete.';
+
+          setTimeout(() => {
+            // Create object URLs for PDF reference view
+            if (pendingSpec) {
+              if (state.specObjectUrl) URL.revokeObjectURL(state.specObjectUrl);
+              state.specObjectUrl = URL.createObjectURL(pendingSpec);
+            }
+            if (pendingDrawings) {
+              if (state.drawingsObjectUrl) URL.revokeObjectURL(state.drawingsObjectUrl);
+              state.drawingsObjectUrl = URL.createObjectURL(pendingDrawings);
+            }
+
+            document.getElementById('upload-overlay').classList.add('hidden');
+            document.getElementById('workspace').style.display = 'flex';
+
+            // Setup topbar
+            const modeToggle = document.getElementById('doc-mode-toggle');
+            modeToggle.style.display = 'flex';
+            document.getElementById('mode-spec').disabled = !state.filename;
+            document.getElementById('mode-drawings').disabled = !state.drawingFilename;
+
+            updateTopbarMeta();
+
+            // Show source PDF toggle and session note
+            document.getElementById('view-toggle').style.display = 'flex';
+            document.getElementById('session-note').style.display = 'flex';
+            state.docView = 'analysis';
+            setDocView('analysis');
+
+            // Start in the mode that was loaded first, or spec if both
+            const initialMode = state.filename ? 'spec' : 'drawings';
+            state.activeMode = initialMode;
+            applyDocMode(initialMode, true);
+            renderAll();
+
+            switchTabByName('grade');
+            state.chatHistory = [];
+            initChat();
+          }, 500);
+
+        } catch (err) {
+          bar.classList.add('error');
+          bar.style.width = '100%';
+          status.style.color = '#c05050';
+          const msg = err.message.includes('fetch')
+            ? 'Cannot reach server. Run: uvicorn server:app --reload'
+            : err.message;
+          status.textContent = msg;
+          document.getElementById('upload-retry').style.display = 'block';
+        }
+      }
+
+      // ── Doc view (Analysis / Source PDF) ────────────────────────────────
+      function setDocView(view) {
+        state.docView = view;
+        document.getElementById('view-btn-analysis').classList.toggle('active', view === 'analysis');
+        document.getElementById('view-btn-source').classList.toggle('active', view === 'source');
+
+        const scroll = document.getElementById('doc-scroll');
+        const frame = document.getElementById('pdf-frame');
+        const bar = document.getElementById('analyze-bar');
+        const search = document.getElementById('doc-search');
+
+        if (view === 'source') {
+          const url = state.activeMode === 'spec' ? state.specObjectUrl : state.drawingsObjectUrl;
+          frame.src = url || '';
+          frame.classList.add('visible');
+          scroll.style.display = 'none';
+          bar.style.display = 'none';
+          search.style.display = 'none';
+        } else {
+          frame.classList.remove('visible');
+          scroll.style.display = '';
+          search.style.display = state.activeMode === 'spec' ? '' : 'none';
+          renderAll();
+        }
+      }
+
+      // ── Doc mode switching ───────────────────────────────────────────────
+      function switchDocMode(mode) {
+        if (mode === 'spec' && !state.filename) return;
+        if (mode === 'drawings' && !state.drawingFilename) return;
+
+        state.activeMode = mode;
+        applyDocMode(mode, false);
+        if (state.docView === 'source') {
+          // Swap the iframe to the correct document
+          const url = mode === 'spec' ? state.specObjectUrl : state.drawingsObjectUrl;
+          document.getElementById('pdf-frame').src = url || '';
+        } else {
+          renderAll();
+        }
+      }
+
+      function applyDocMode(mode, skipTabSwitch) {
+        // Mode buttons
+        document.getElementById('mode-spec').classList.toggle('active', mode === 'spec');
+        document.getElementById('mode-drawings').classList.toggle('active', mode === 'drawings');
+
+        // Tab visibility
+        document.getElementById('tab-btn-sections').style.display = mode === 'spec' ? '' : 'none';
+        document.getElementById('tab-btn-sheets').style.display = mode === 'drawings' ? '' : 'none';
+
+        // Doc search visibility (spec only)
+        document.getElementById('doc-search').style.display = mode === 'spec' ? '' : 'none';
+
+        if (!skipTabSwitch) {
+          switchTabByName('issues');
+        }
+      }
+
+      function updateTopbarMeta() {
+        const parts = [];
+        if (state.filename) parts.push(state.filename);
+        if (state.drawingFilename) parts.push(state.drawingFilename);
+        document.getElementById('topbar-meta').textContent = parts.join(' + ') || 'No documents loaded';
+      }
+
+      // ── Render all ───────────────────────────────────────────────────────
+      function renderAll() {
+        if (state.activeMode === 'spec') {
+          renderDocPane();
+          renderIssuesList();
+          renderSectionsTab();
+          renderGradeTab();
+        } else {
+          renderDrawingPane();
+          renderDrawingIssuesList();
+          renderSheetsTab();
+          renderDrawingGradeTab();
+        }
+      }
+
+      // ── Spec document pane ───────────────────────────────────────────────
+      function renderDocPane() {
+        const section = state.sections.find(s => s.number === state.currentSection);
+        const label = document.getElementById('doc-section-label');
+        const analyzeBar = document.getElementById('analyze-bar');
+        const docScroll = document.getElementById('doc-scroll');
+
+        if (!section) {
+          label.textContent = 'Select a section';
+          analyzeBar.style.display = 'none';
+          docScroll.innerHTML = '<div class="empty-state"><div class="empty-icon">📄</div>Select a section from the Sections tab</div>';
+          return;
+        }
+
+        label.textContent = `Section ${section.number} — ${section.title}`;
+
+        const c = section.issue_counts;
+        const total = c.errors + c.warnings + c.notes;
+        analyzeBar.style.display = 'flex';
+        if (total === 0) {
+          document.getElementById('analyze-bar-text').textContent = 'Analysis complete — no issues found in this section';
+        } else {
+          const parts = [];
+          if (c.errors) parts.push(`${c.errors} error${c.errors !== 1 ? 's' : ''}`);
+          if (c.warnings) parts.push(`${c.warnings} warning${c.warnings !== 1 ? 's' : ''}`);
+          if (c.notes) parts.push(`${c.notes} note${c.notes !== 1 ? 's' : ''}`);
+          document.getElementById('analyze-bar-text').textContent = `Analysis complete — ${parts.join(', ')} found in this section`;
+        }
+
+        const sectionIssues = state.issues.filter(
+          i => i.section_number === state.currentSection && !state.dismissed.has(i.id)
+        );
+
+        function issueForClause(clauseId) {
+          return sectionIssues.find(iss =>
+            iss.clause_id === clauseId || clauseId.startsWith(iss.clause_id + '.')
+          );
+        }
+
+        const partNames = { '1': 'General', '2': 'Products', '3': 'Execution' };
+        const groups = {};
+        for (const clause of section.clauses) {
+          const partKey = clause.id.split('.')[0];
+          if (!groups[partKey]) groups[partKey] = [];
+          groups[partKey].push(clause);
+        }
+
+        const orderedKeys = Object.keys(groups).sort((a, b) => Number(a) - Number(b));
+        let html = '';
+
+        if (orderedKeys.length === 0) {
+          html = `<div class="spec-section">
+            <div class="spec-section-number">Section ${esc(section.number)}</div>
+            <div class="spec-section-title">${esc(section.title)}</div>
+            <pre class="section-raw-text">${esc(section.text)}</pre>
+          </div>`;
+        } else {
+          for (const key of orderedKeys) {
+            const clauses = groups[key];
+            const partName = partNames[key] || `Part ${key}`;
+            html += `<div class="spec-section">
+              <div class="spec-section-number">Section ${key}</div>
+              <div class="spec-section-title">${esc(partName)}</div>`;
+            for (const clause of clauses) {
+              const issue = issueForClause(clause.id);
+              let hlClass = '';
+              let flagHtml = '';
+              let detailHtml = '';
+              if (issue) {
+                hlClass = issue.type === 'error' ? 'highlight-error'
+                        : issue.type === 'warning' ? 'highlight-warn'
+                        : 'highlight-info';
+                const fc = issue.type === 'error' ? 'flag-error'
+                         : issue.type === 'warning' ? 'flag-warn' : 'flag-info';
+                const fl = issue.type === 'error' ? 'Error'
+                         : issue.type === 'warning' ? 'Warning' : 'Note';
+                const dc = issue.type === 'error' ? '#8a3030'
+                         : issue.type === 'warning' ? '#7a5a20' : '#3a6090';
+                flagHtml = `<span class="inline-flag ${fc}">${fl}</span>`;
+                detailHtml = `<div style="margin-top:6px;font-size:0.75rem;color:${dc};">${esc(issue.detail)}</div>`;
+              }
+              html += `<div class="spec-clause ${hlClass}" id="${clauseElId(clause.id)}">
+                <span class="clause-id">${esc(clause.id)}</span>${esc(clause.text)}${flagHtml}${detailHtml}
+              </div>`;
+            }
+            html += `</div>`;
+          }
+        }
+
+        docScroll.innerHTML = html;
+      }
+
+      // ── Drawing doc pane ─────────────────────────────────────────────────
+      function renderDrawingPane() {
+        const label = document.getElementById('doc-section-label');
+        const analyzeBar = document.getElementById('analyze-bar');
+        const docScroll = document.getElementById('doc-scroll');
+
+        if (!state.currentSheet) {
+          label.textContent = 'Select a sheet';
+          analyzeBar.style.display = 'none';
+          docScroll.innerHTML = '<div class="empty-state"><div class="empty-icon">📐</div>Select a sheet from the Sheets tab</div>';
+          return;
+        }
+
+        const sheet = state.drawingSheets.find(s => s.number === state.currentSheet);
+        if (!sheet) return;
+
+        label.textContent = `${sheet.number} — ${sheet.title}`;
+
+        const c = sheet.issue_counts || { errors: 0, warnings: 0, notes: 0 };
+        const total = c.errors + c.warnings + c.notes;
+        analyzeBar.style.display = 'flex';
+        if (total === 0) {
+          document.getElementById('analyze-bar-text').textContent = 'Analysis complete — no issues found on this sheet';
+        } else {
+          const parts = [];
+          if (c.errors) parts.push(`${c.errors} error${c.errors !== 1 ? 's' : ''}`);
+          if (c.warnings) parts.push(`${c.warnings} warning${c.warnings !== 1 ? 's' : ''}`);
+          if (c.notes) parts.push(`${c.notes} note${c.notes !== 1 ? 's' : ''}`);
+          document.getElementById('analyze-bar-text').textContent = `Analysis complete — ${parts.join(', ')} on this sheet`;
+        }
+
+        const dc = disciplineColors(sheet.discipline);
+        const sheetIssues = state.drawingIssues.filter(
+          i => i.sheet_number === state.currentSheet && !state.drawingDismissed.has(i.id)
+        );
+
+        let issuesHtml = '';
+        if (!sheetIssues.length) {
+          issuesHtml = '<div class="empty-state" style="padding:20px 0;flex:0;"><div class="empty-icon">✓</div>No issues on this sheet</div>';
+        } else {
+          for (const iss of sheetIssues) {
+            const typeClass = iss.type === 'error' ? 'type-error'
+                            : iss.type === 'warning' ? 'type-warning' : 'type-note';
+            const bc = iss.type === 'error' ? 'badge-error'
+                     : iss.type === 'warning' ? 'badge-warn' : 'badge-info';
+            const bl = iss.type === 'error' ? 'Error' : iss.type === 'warning' ? 'Warning' : 'Note';
+            issuesHtml += `<div class="sheet-issue-row ${typeClass}">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                <span class="issue-type-badge ${bc}">${bl}</span>
+              </div>
+              <div class="sheet-issue-desc">${esc(iss.description)}</div>
+              <div class="sheet-issue-detail">${esc(iss.detail)}</div>
+            </div>`;
+          }
+        }
+
+        docScroll.innerHTML = `
+          <div class="sheet-detail-card">
+            <div class="sheet-detail-number">${esc(sheet.number)}</div>
+            <div class="sheet-detail-title">${esc(sheet.title)}</div>
+            <div class="sheet-detail-meta">
+              <span class="discipline-badge" style="background:${dc.bg};color:${dc.text};border:1px solid ${dc.border}">${esc(sheet.discipline || 'Other')}</span>
+              ${sheet.revision != null && sheet.revision !== '' ? `<span class="sheet-meta-chip">Rev ${esc(sheet.revision)}</span>` : ''}
+            </div>
+          </div>
+          <div class="sheet-issues-in-pane">${issuesHtml}</div>
+        `;
+      }
+
+      function disciplineColors(disc) {
+        const map = {
+          'Architectural': { bg: '#edf4ff', text: '#2060c0', border: '#a8c4f0' },
+          'Structural':    { bg: '#fdf3e4', text: '#a04000', border: '#e8c098' },
+          'Civil':         { bg: '#f0fdf4', text: '#1a6030', border: '#88c898' },
+          'Mechanical':    { bg: '#fdf0fb', text: '#8020a0', border: '#d8a0e8' },
+          'Electrical':    { bg: '#fffce4', text: '#806000', border: '#e0d080' },
+          'Plumbing':      { bg: '#e4f8ff', text: '#005080', border: '#80c8e8' },
+          'Landscape':     { bg: '#edfdf0', text: '#226a30', border: '#88d8a0' },
+        };
+        return map[disc] || { bg: '#f4f4f4', text: '#555555', border: '#d0d0d0' };
+      }
+
+      // ── Spec issues list ─────────────────────────────────────────────────
+      function renderIssuesList() {
+        const sectionIssues = state.issues.filter(
+          i => i.section_number === state.currentSection && !state.dismissed.has(i.id)
+        );
+
+        const errors = sectionIssues.filter(i => i.type === 'error').length;
+        const warnings = sectionIssues.filter(i => i.type === 'warning').length;
+        const notes = sectionIssues.filter(i => i.type === 'note').length;
+
+        document.getElementById('issues-summary').innerHTML = `
+          <div class="issue-count count-error"><div class="issue-count-dot"></div>${errors} Error${errors !== 1 ? 's' : ''}</div>
+          <div class="issue-count count-warn"><div class="issue-count-dot"></div>${warnings} Warning${warnings !== 1 ? 's' : ''}</div>
+          <div class="issue-count count-info"><div class="issue-count-dot"></div>${notes} Note${notes !== 1 ? 's' : ''}</div>
+        `;
+
+        if (!state.currentSection) {
+          document.getElementById('issues-list').innerHTML = '<div class="empty-state"><div class="empty-icon">✓</div>Select a section to view its issues</div>';
+          return;
+        }
+
+        if (!sectionIssues.length) {
+          document.getElementById('issues-list').innerHTML = '<div class="empty-state"><div class="empty-icon">✓</div>No issues in this section</div>';
+          return;
+        }
+
+        const sorted = [...sectionIssues].sort((a, b) => {
+          const order = { error: 0, warning: 1, note: 2 };
+          return (order[a.type] ?? 3) - (order[b.type] ?? 3);
+        });
+
+        let html = '';
+        for (const iss of sorted) {
+          const bc = iss.type === 'error' ? 'badge-error' : iss.type === 'warning' ? 'badge-warn' : 'badge-info';
+          const bl = iss.type === 'error' ? 'Error' : iss.type === 'warning' ? 'Warning' : 'Note';
+          html += `<div class="issue-item" id="issue-item-${escAttr(iss.id)}" onclick="selectIssue('${escAttr(iss.id)}')">
+            <div class="issue-item-header">
+              <span class="issue-type-badge ${bc}">${bl}</span>
+              <span class="issue-location">§${esc(iss.clause_id)}</span>
+            </div>
+            <div class="issue-desc">${esc(iss.description)}</div>
+            <div class="issue-clause-preview">"${esc(iss.excerpt)}"</div>
+            <div class="issue-actions">
+              <button class="issue-btn" onclick="event.stopPropagation();jumpToClause('${escAttr(iss.id)}')">Jump to clause</button>
+              <button class="issue-btn" onclick="event.stopPropagation();askAboutIssue('${escAttr(iss.id)}')">Ask</button>
+              <button class="issue-btn" onclick="event.stopPropagation();dismissIssue('${escAttr(iss.id)}')">Dismiss</button>
+            </div>
+          </div>`;
+        }
+
+        document.getElementById('issues-list').innerHTML = html;
+      }
+
+      // ── Drawing issues list ──────────────────────────────────────────────
+      function renderDrawingIssuesList() {
+        const sheetIssues = state.drawingIssues.filter(
+          i => i.sheet_number === state.currentSheet && !state.drawingDismissed.has(i.id)
+        );
+
+        const errors = sheetIssues.filter(i => i.type === 'error').length;
+        const warnings = sheetIssues.filter(i => i.type === 'warning').length;
+        const notes = sheetIssues.filter(i => i.type === 'note').length;
+
+        document.getElementById('issues-summary').innerHTML = `
+          <div class="issue-count count-error"><div class="issue-count-dot"></div>${errors} Error${errors !== 1 ? 's' : ''}</div>
+          <div class="issue-count count-warn"><div class="issue-count-dot"></div>${warnings} Warning${warnings !== 1 ? 's' : ''}</div>
+          <div class="issue-count count-info"><div class="issue-count-dot"></div>${notes} Note${notes !== 1 ? 's' : ''}</div>
+        `;
+
+        if (!state.currentSheet) {
+          document.getElementById('issues-list').innerHTML = '<div class="empty-state"><div class="empty-icon">✓</div>Select a sheet to view its issues</div>';
+          return;
+        }
+
+        if (!sheetIssues.length) {
+          document.getElementById('issues-list').innerHTML = '<div class="empty-state"><div class="empty-icon">✓</div>No issues on this sheet</div>';
+          return;
+        }
+
+        const sorted = [...sheetIssues].sort((a, b) => {
+          const order = { error: 0, warning: 1, note: 2 };
+          return (order[a.type] ?? 3) - (order[b.type] ?? 3);
+        });
+
+        let html = '';
+        for (const iss of sorted) {
+          const bc = iss.type === 'error' ? 'badge-error' : iss.type === 'warning' ? 'badge-warn' : 'badge-info';
+          const bl = iss.type === 'error' ? 'Error' : iss.type === 'warning' ? 'Warning' : 'Note';
+          html += `<div class="issue-item" id="draw-issue-${escAttr(iss.id)}">
+            <div class="issue-item-header">
+              <span class="issue-type-badge ${bc}">${bl}</span>
+              <span class="issue-location">${esc(iss.sheet_number)}</span>
+            </div>
+            <div class="issue-desc">${esc(iss.description)}</div>
+            <div class="issue-actions">
+              <button class="issue-btn" onclick="askAboutDrawingIssue('${escAttr(iss.id)}')">Ask</button>
+              <button class="issue-btn" onclick="dismissDrawingIssue('${escAttr(iss.id)}')">Dismiss</button>
+            </div>
+          </div>`;
+        }
+
+        document.getElementById('issues-list').innerHTML = html;
+      }
+
+      // ── Sections tab ─────────────────────────────────────────────────────
+      function renderSectionsTab() {
+        if (!state.sections.length) {
+          document.getElementById('sections-list').innerHTML = '<div class="empty-state"><div class="empty-icon">📋</div>No specification loaded</div>';
+          return;
+        }
+
+        const groups = {};
+        for (const s of state.sections) {
+          const key = `${s.division}|${s.division_name}`;
+          if (!groups[key]) groups[key] = { division: s.division, name: s.division_name, sections: [] };
+          groups[key].sections.push(s);
+        }
+
+        let html = '';
+        for (const key of Object.keys(groups)) {
+          const g = groups[key];
+          const isCurrentDiv = g.sections.some(s => s.number === state.currentSection);
+          const bgStyle = isCurrentDiv ? 'background:#f0f9f4;' : '';
+          const labelColor = isCurrentDiv ? '#3dba6e' : '#aaaaaa';
+          const viewing = isCurrentDiv ? ' · viewing' : '';
+
+          html += `<div style="padding:14px 16px;border-bottom:1px solid #ebebeb;${bgStyle}">
+            <div style="font-size:0.65rem;color:${labelColor};letter-spacing:0.06em;text-transform:uppercase;margin-bottom:10px;">Division ${g.division} – ${esc(g.name)}${viewing}</div>
+            <div style="display:flex;flex-direction:column;gap:4px;">`;
+
+          for (const s of g.sections) {
+            const isCurrent = s.number === state.currentSection;
+            const color = isCurrent ? 'color:#3dba6e;' : 'color:#333333;';
+            const ic = s.issue_counts;
+            let flags = '';
+            if (ic.errors > 0) flags += ` <span class="inline-flag flag-error" style="font-size:0.6rem;">${ic.errors} Error${ic.errors !== 1 ? 's' : ''}</span>`;
+            if (ic.warnings > 0) flags += ` <span class="inline-flag flag-warn" style="font-size:0.6rem;">${ic.warnings} Warning${ic.warnings !== 1 ? 's' : ''}</span>`;
+            if (ic.notes > 0) flags += ` <span class="inline-flag flag-info" style="font-size:0.6rem;">${ic.notes} Note${ic.notes !== 1 ? 's' : ''}</span>`;
+            html += `<div class="spec-clause" style="padding-left:0;border-left:none;cursor:pointer;${color}" onclick="switchSection('${escAttr(s.number)}')">
+              ${esc(s.number)} — ${esc(s.title)}${flags}
+            </div>`;
+          }
+
+          html += `</div></div>`;
+        }
+
+        document.getElementById('sections-list').innerHTML = html;
+      }
+
+      // ── Sheets tab ───────────────────────────────────────────────────────
+      function renderSheetsTab() {
+        if (!state.drawingSheets.length) {
+          document.getElementById('sheets-list').innerHTML = '<div class="empty-state"><div class="empty-icon">📐</div>No drawing set loaded</div>';
+          return;
+        }
+
+        const disciplineOrder = ['Architectural', 'Structural', 'Civil', 'Mechanical', 'Electrical', 'Plumbing', 'Landscape', 'Other'];
+        const groups = {};
+        for (const s of state.drawingSheets) {
+          const disc = s.discipline || 'Other';
+          if (!groups[disc]) groups[disc] = [];
+          groups[disc].push(s);
+        }
+
+        const orderedDiscs = disciplineOrder.filter(d => groups[d])
+          .concat(Object.keys(groups).filter(d => !disciplineOrder.includes(d)));
+
+        let html = '';
+        for (const disc of orderedDiscs) {
+          const sheets = groups[disc];
+          const isCurrentDisc = sheets.some(s => s.number === state.currentSheet);
+          const bgStyle = isCurrentDisc ? 'background:#f0f9f4;' : '';
+          const labelColor = isCurrentDisc ? '#3dba6e' : '#aaaaaa';
+
+          html += `<div style="padding:14px 16px;border-bottom:1px solid #ebebeb;${bgStyle}">
+            <div style="font-size:0.65rem;color:${labelColor};letter-spacing:0.06em;text-transform:uppercase;margin-bottom:10px;">${esc(disc)}</div>
+            <div style="display:flex;flex-direction:column;gap:4px;">`;
+
+          for (const s of sheets) {
+            const isCurrent = s.number === state.currentSheet;
+            const color = isCurrent ? 'color:#3dba6e;' : 'color:#333333;';
+            const ic = s.issue_counts || { errors: 0, warnings: 0, notes: 0 };
+            let flags = '';
+            if (ic.errors > 0) flags += ` <span class="inline-flag flag-error" style="font-size:0.6rem;">${ic.errors} Error${ic.errors !== 1 ? 's' : ''}</span>`;
+            if (ic.warnings > 0) flags += ` <span class="inline-flag flag-warn" style="font-size:0.6rem;">${ic.warnings} Warning${ic.warnings !== 1 ? 's' : ''}</span>`;
+            if (ic.notes > 0) flags += ` <span class="inline-flag flag-info" style="font-size:0.6rem;">${ic.notes} Note${ic.notes !== 1 ? 's' : ''}</span>`;
+            html += `<div class="spec-clause" style="padding-left:0;border-left:none;cursor:pointer;${color}" onclick="switchSheet('${escAttr(s.number)}')">
+              ${esc(s.number)} — ${esc(s.title)}${flags}
+            </div>`;
+          }
+
+          html += `</div></div>`;
+        }
+
+        document.getElementById('sheets-list').innerHTML = html;
+      }
+
+      // ── Spec grade tab ───────────────────────────────────────────────────
+      function renderGradeTab() {
+        const grade = state.activeMode === 'spec' ? state.grade : state.drawingGrade;
+        renderGradeInto(grade, state.activeMode === 'spec'
+          ? `${state.sections.length} section${state.sections.length !== 1 ? 's' : ''} analyzed`
+          : `${state.drawingSheets.length} sheet${state.drawingSheets.length !== 1 ? 's' : ''} analyzed`
+        );
+      }
+
+      function renderDrawingGradeTab() {
+        renderGradeInto(state.drawingGrade,
+          `${state.drawingSheets.length} sheet${state.drawingSheets.length !== 1 ? 's' : ''} analyzed`
+        );
+      }
+
+      function renderGradeInto(grade, scopeLabel) {
+        if (!grade || !grade.overall_score) {
+          document.getElementById('grade-content').innerHTML = '<div class="empty-state"><div class="empty-icon">📊</div>Grade not available</div>';
+          return;
+        }
+
+        const letterColor = gradeColor(grade.letter);
+        let metricsHtml = '';
+        let currentCat = '';
+        for (const m of (grade.metrics || [])) {
+          if (m.category !== currentCat) {
+            currentCat = m.category;
+            const mt = metricsHtml ? 'margin-top:16px;' : '';
+            metricsHtml += `<div class="grade-metric-group-label" style="${mt}">${esc(m.category)}</div>`;
+          }
+          const pct = Math.round((m.score / m.max_pts) * 100);
+          const cc = pct >= 80 ? 'good' : pct >= 60 ? 'warn' : 'bad';
+          let findingsHtml = '';
+          for (const f of (m.findings || [])) {
+            const fc = f.type === 'ok' ? 'grade-finding-ok' : f.type === 'error' ? 'grade-finding-error' : 'grade-finding-warn';
+            const pts = f.pts_delta != null ? `<span class="grade-finding-pts">${f.pts_delta > 0 ? '+' : ''}${f.pts_delta} pts</span>` : '';
+            findingsHtml += `<div class="grade-finding ${fc}">${esc(f.text)}${pts}</div>`;
+          }
+          metricsHtml += `<div class="grade-metric">
+            <div class="grade-metric-header">
+              <div class="grade-metric-name">${esc(m.name)}<span class="grade-metric-weight">${m.max_pts} pts</span></div>
+              <div class="grade-metric-score ${cc}">${m.score} / ${m.max_pts}</div>
+            </div>
+            <div class="grade-bar-track"><div class="grade-bar-fill ${cc}" style="width:${pct}%"></div></div>
+            <div class="grade-metric-detail">${esc(m.detail)}</div>
+            <div class="grade-metric-findings">${findingsHtml}</div>
+          </div>`;
+        }
+
+        document.getElementById('grade-content').innerHTML = `
+          <div class="grade-hero">
+            <div class="grade-letter" style="color:${letterColor}">${esc(grade.letter)}</div>
+            <div class="grade-hero-right">
+              <div class="grade-score-label">Overall Score</div>
+              <div class="grade-score-num">${grade.overall_score} / 100</div>
+              <div class="grade-scope">${esc(scopeLabel)}</div>
+            </div>
+          </div>
+          <div class="grade-explainer">
+            <div class="grade-explainer-header" onclick="toggleExplainer(this)">
+              <span>How is this graded?</span>
+              <span class="grade-explainer-arrow">▾</span>
+            </div>
+            <div class="grade-explainer-body">
+              <p>Each metric is evaluated against the full document text. Errors deduct full points; warnings deduct half; notes flag for review with no deduction.</p>
+              <p style="margin-top:8px;">Use <strong>Dismiss</strong> on any issue to exclude it from future scoring runs.</p>
+            </div>
+          </div>
+          <div class="grade-metrics">${metricsHtml}</div>
+          <div class="grade-override-note">Dismiss any issue in the Issues tab to exclude it from scoring and log your override.</div>
+        `;
+      }
+
+      function gradeColor(letter) {
+        if (!letter) return '#aaaaaa';
+        const l = letter[0];
+        if (l === 'A') return '#3dba6e';
+        if (l === 'B') return '#4a9080';
+        if (l === 'C') return '#8a6000';
+        if (l === 'D') return '#b04000';
+        return '#b02020';
+      }
+
+      // ── Chat ─────────────────────────────────────────────────────────────
+      function initChat() {
+        const specPart = state.filename
+          ? `<strong>${esc(state.filename)}</strong> — ${state.sections.length} sections, ${state.issues.filter(i => !state.dismissed.has(i.id)).length} issues`
+          : null;
+        const drawPart = state.drawingFilename
+          ? `<strong>${esc(state.drawingFilename)}</strong> — ${state.drawingSheets.length} sheets, ${state.drawingIssues.filter(i => !state.drawingDismissed.has(i.id)).length} issues`
+          : null;
+
+        const docSummary = [specPart, drawPart].filter(Boolean).join(' and ');
+
+        // Update suggested questions based on what's loaded
+        const suggestedEl = document.getElementById('suggested-questions');
+        if (state.filename && state.drawingFilename) {
+          suggestedEl.innerHTML = `
+            <div class="suggested-label">Suggested</div>
+            <button class="suggested-q" onclick="addQuestion(this)">Are there conflicts between the spec sections?</button>
+            <button class="suggested-q" onclick="addQuestion(this)">Do the drawing notes reference the correct spec sections?</button>
+            <button class="suggested-q" onclick="addQuestion(this)">Summarize all submittal requirements.</button>
+          `;
+        } else if (state.drawingFilename) {
+          suggestedEl.innerHTML = `
+            <div class="suggested-label">Suggested</div>
+            <button class="suggested-q" onclick="addQuestion(this)">Which sheets are missing from the drawing index?</button>
+            <button class="suggested-q" onclick="addQuestion(this)">Are code compliance notes present on all required sheets?</button>
+            <button class="suggested-q" onclick="addQuestion(this)">Summarize all title block issues.</button>
+          `;
+        } else {
+          suggestedEl.innerHTML = `
+            <div class="suggested-label">Suggested</div>
+            <button class="suggested-q" onclick="addQuestion(this)">Are there any conflicts between sections?</button>
+            <button class="suggested-q" onclick="addQuestion(this)">Which standards references are outdated?</button>
+            <button class="suggested-q" onclick="addQuestion(this)">Summarize all submittal requirements.</button>
+          `;
+        }
+
+        document.getElementById('chat-messages').innerHTML = `
+          <div class="msg assistant">
+            <div class="msg-role">Assistant</div>
+            <div class="msg-bubble">
+              I've analyzed ${docSummary}.<br><br>
+              Ask me anything about these documents — I can explain issues, compare sections to drawings, check coordination, or summarize requirements.
+            </div>
+          </div>`;
+      }
+
+      async function sendMessage() {
+        const input = document.getElementById('chat-input');
+        const text = input.value.trim();
+        if (!text) return;
+
+        const messages = document.getElementById('chat-messages');
+        messages.innerHTML += `<div class="msg user"><div class="msg-role">You</div><div class="msg-bubble">${esc(text)}</div></div>`;
+
+        const thinkingId = 'thinking-' + Date.now();
+        messages.innerHTML += `<div class="msg assistant" id="${thinkingId}"><div class="msg-role">Assistant</div><div class="msg-bubble" style="color:#888;">Analyzing documents…</div></div>`;
+        input.value = '';
+        messages.scrollTop = messages.scrollHeight;
+
+        state.chatHistory.push({ role: 'user', content: text });
+
+        try {
+          const resp = await fetch(`${API}/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: text, history: state.chatHistory.slice(-20) }),
+          });
+
+          if (!resp.ok) {
+            const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+            throw new Error(err.detail || 'Chat error');
+          }
+
+          const data = await resp.json();
+          const el = document.getElementById(thinkingId);
+          if (el) {
+            el.querySelector('.msg-bubble').innerHTML = formatResponse(data.response);
+            el.removeAttribute('id');
+          }
+          state.chatHistory.push({ role: 'assistant', content: data.response });
+
+        } catch (err) {
+          const el = document.getElementById(thinkingId);
+          if (el) {
+            el.querySelector('.msg-bubble').style.color = '#c05050';
+            el.querySelector('.msg-bubble').textContent = `Error: ${err.message}`;
+          }
+        }
+
+        messages.scrollTop = messages.scrollHeight;
+      }
+
+      function formatResponse(text) {
+        return esc(text)
+          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+          .replace(/\n\n+/g, '<br><br>')
+          .replace(/\n/g, '<br>');
+      }
+
+      // ── Interactions ─────────────────────────────────────────────────────
+      function switchSection(number) {
+        state.currentSection = number;
+        renderDocPane();
+        renderIssuesList();
+        renderSectionsTab();
+        switchTabByName('issues');
+      }
+
+      function switchSheet(number) {
+        state.currentSheet = number;
+        renderDrawingPane();
+        renderDrawingIssuesList();
+        renderSheetsTab();
+        switchTabByName('issues');
+      }
+
+      function selectIssue(id) {
+        document.querySelectorAll('.issue-item').forEach(el => el.classList.remove('selected'));
+        const el = document.getElementById(`issue-item-${id}`);
+        if (el) el.classList.add('selected');
+      }
+
+      function jumpToClause(issueId) {
+        const issue = state.issues.find(i => i.id === issueId);
+        if (!issue) return;
+
+        if (issue.section_number !== state.currentSection) {
+          state.currentSection = issue.section_number;
+          renderDocPane();
+          renderIssuesList();
+          renderSectionsTab();
+        }
+
+        setTimeout(() => {
+          const el = document.getElementById(clauseElId(issue.clause_id));
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.classList.remove('clause-flash');
+            void el.offsetWidth;
+            el.classList.add('clause-flash');
+            setTimeout(() => el.classList.remove('clause-flash'), 1700);
+          }
+        }, 80);
+      }
+
+      function askAboutIssue(issueId) {
+        const issue = state.issues.find(i => i.id === issueId);
+        if (!issue) return;
+        switchTabByName('ask');
+        const input = document.getElementById('chat-input');
+        input.value = `Explain the issue at §${issue.clause_id}: ${issue.description}`;
+        input.focus();
+      }
+
+      function askAboutDrawingIssue(issueId) {
+        const issue = state.drawingIssues.find(i => i.id === issueId);
+        if (!issue) return;
+        switchTabByName('ask');
+        const input = document.getElementById('chat-input');
+        input.value = `Explain this drawing issue on sheet ${issue.sheet_number}: ${issue.description}`;
+        input.focus();
+      }
+
+      function dismissIssue(issueId) {
+        state.dismissed.add(issueId);
+        const issue = state.issues.find(i => i.id === issueId);
+        if (issue) {
+          const section = state.sections.find(s => s.number === issue.section_number);
+          if (section) {
+            const key = issue.type === 'error' ? 'errors' : issue.type === 'warning' ? 'warnings' : 'notes';
+            section.issue_counts[key] = Math.max(0, section.issue_counts[key] - 1);
+          }
+        }
+        renderDocPane();
+        renderIssuesList();
+        renderSectionsTab();
+      }
+
+      function dismissDrawingIssue(issueId) {
+        state.drawingDismissed.add(issueId);
+        const issue = state.drawingIssues.find(i => i.id === issueId);
+        if (issue) {
+          const sheet = state.drawingSheets.find(s => s.number === issue.sheet_number);
+          if (sheet && sheet.issue_counts) {
+            const key = issue.type === 'error' ? 'errors' : issue.type === 'warning' ? 'warnings' : 'notes';
+            sheet.issue_counts[key] = Math.max(0, sheet.issue_counts[key] - 1);
+          }
+        }
+        renderDrawingPane();
+        renderDrawingIssuesList();
+        renderSheetsTab();
+      }
+
+      // ── Doc search (spec mode only) ──────────────────────────────────────
+      function onDocSearch() {
+        const q = document.getElementById('doc-search').value.toLowerCase().trim();
+        const scroll = document.getElementById('doc-scroll');
+        scroll.querySelectorAll('.spec-clause').forEach(el => {
+          el.style.display = (!q || el.textContent.toLowerCase().includes(q)) ? '' : 'none';
+        });
+        scroll.querySelectorAll('.spec-section').forEach(section => {
+          const visible = [...section.querySelectorAll('.spec-clause')].some(el => el.style.display !== 'none');
+          section.style.display = (!q || visible) ? '' : 'none';
+        });
+      }
+
+      // ── Export report (.doc / Word) ──────────────────────────────────────
+      function exportReport() {
+        const hasSpec = !!state.filename;
+        const hasDrawings = !!state.drawingFilename;
+
+        if (!hasSpec && !hasDrawings) { alert('No documents loaded.'); return; }
+
+        const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+        function badgeColor(type) {
+          if (type === 'error')   return { bg: '#fdeaea', text: '#c02020', border: '#e8a8a8', label: 'Error' };
+          if (type === 'warning') return { bg: '#fef5e0', text: '#8a6000', border: '#e0c060', label: 'Warning' };
+          return                         { bg: '#eef4fb', text: '#1060c0', border: '#90b8e8', label: 'Note' };
+        }
+
+        function gradeHex(letter) {
+          if (!letter) return '#aaaaaa';
+          if (letter[0] === 'A') return '#3dba6e';
+          if (letter[0] === 'B') return '#4a9080';
+          if (letter[0] === 'C') return '#8a6000';
+          if (letter[0] === 'D') return '#b04000';
+          return '#b02020';
+        }
+
+        function renderGradeTable(grade) {
+          if (!grade || !grade.overall_score) return '<p style="color:#aaa">No grade available.</p>';
+          let rows = '';
+          for (const m of (grade.metrics || [])) {
+            const pct = Math.round((m.score / m.max_pts) * 100);
+            const bar = `<div style="background:#e8e8e8;border-radius:3px;height:6px;width:180px;display:inline-block;vertical-align:middle;">
+              <div style="background:${pct>=80?'#3dba6e':pct>=60?'#c89020':'#b02020'};height:6px;border-radius:3px;width:${pct}%;"></div></div>`;
+            rows += `<tr>
+              <td style="padding:6px 10px;font-size:11pt;color:#222;border-bottom:1px solid #e8e8e8;">${m.name}</td>
+              <td style="padding:6px 10px;font-size:11pt;color:#555;border-bottom:1px solid #e8e8e8;">${m.category}</td>
+              <td style="padding:6px 10px;font-size:11pt;font-weight:600;color:${pct>=80?'#3dba6e':pct>=60?'#8a6000':'#b02020'};border-bottom:1px solid #e8e8e8;white-space:nowrap;">${m.score} / ${m.max_pts}</td>
+              <td style="padding:6px 10px;border-bottom:1px solid #e8e8e8;">${bar}</td>
+            </tr>`;
+          }
+          return `
+            <div style="margin-bottom:12px;display:flex;align-items:center;gap:20px;">
+              <span style="font-size:48pt;font-weight:700;color:${gradeHex(grade.letter)};line-height:1;">${grade.letter}</span>
+              <div>
+                <div style="font-size:9pt;color:#aaa;text-transform:uppercase;letter-spacing:.08em;">Overall Score</div>
+                <div style="font-size:22pt;font-weight:600;color:#111;">${grade.overall_score} / 100</div>
+              </div>
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-family:sans-serif;">
+              <thead><tr style="background:#f8f8f8;">
+                <th style="padding:6px 10px;font-size:9pt;color:#aaa;text-align:left;border-bottom:2px solid #e8e8e8;">Metric</th>
+                <th style="padding:6px 10px;font-size:9pt;color:#aaa;text-align:left;border-bottom:2px solid #e8e8e8;">Category</th>
+                <th style="padding:6px 10px;font-size:9pt;color:#aaa;text-align:left;border-bottom:2px solid #e8e8e8;">Score</th>
+                <th style="padding:6px 10px;font-size:9pt;color:#aaa;text-align:left;border-bottom:2px solid #e8e8e8;"></th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table>`;
+        }
+
+        function renderIssueRows(issues) {
+          if (!issues.length) return '<p style="color:#aaa;font-size:11pt;">No issues.</p>';
+          let html = '';
+          for (const iss of issues) {
+            const b = badgeColor(iss.type);
+            const location = iss.clause_id ? `§${iss.clause_id}` : (iss.sheet_number || '');
+            const excerpt = iss.excerpt ? `<div style="margin:4px 0 0;font-size:10pt;color:#aaa;font-style:italic;padding:4px 8px;background:#f6f6f6;border-left:3px solid #ddd;">&ldquo;${iss.excerpt}&rdquo;</div>` : '';
+            html += `<div style="margin-bottom:14px;padding:12px 14px;border:1px solid #e8e8e8;border-radius:6px;font-family:sans-serif;">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+                <span style="font-size:9pt;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:3px;background:${b.bg};color:${b.text};border:1px solid ${b.border};">${b.label}</span>
+                <span style="font-size:10pt;color:#aaa;font-family:monospace;">${location}</span>
+              </div>
+              <div style="font-size:11pt;font-weight:600;color:#222;margin-bottom:4px;">${iss.description}</div>
+              ${excerpt}
+              <div style="font-size:10pt;color:#666;margin-top:6px;line-height:1.5;">${iss.detail || ''}</div>
+            </div>`;
+          }
+          return html;
+        }
+
+        let body = `
+          <div style="font-family:sans-serif;max-width:720px;margin:0 auto;padding:40px 0;">
+            <h1 style="font-size:18pt;font-weight:700;color:#111;margin:0 0 4px;">QA/QC — Construction Document Review</h1>
+            <p style="font-size:10pt;color:#aaa;margin:0 0 32px;">${date}</p>`;
+
+        if (hasSpec) {
+          const issues = state.issues.filter(i => !state.dismissed.has(i.id));
+          body += `
+            <h2 style="font-size:13pt;font-weight:600;color:#111;border-bottom:2px solid #e8e8e8;padding-bottom:8px;margin:0 0 16px;">Specification</h2>
+            <p style="font-size:10pt;color:#666;margin:0 0 20px;">${state.filename} &nbsp;·&nbsp; ${state.sections.length} sections &nbsp;·&nbsp; ${issues.filter(i=>i.type==='error').length} errors, ${issues.filter(i=>i.type==='warning').length} warnings, ${issues.filter(i=>i.type==='note').length} notes</p>
+            <h3 style="font-size:11pt;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.06em;margin:0 0 12px;">Grade</h3>
+            ${renderGradeTable(state.grade)}
+            <h3 style="font-size:11pt;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.06em;margin:28px 0 12px;">Issues</h3>
+            ${renderIssueRows(issues)}`;
+        }
+
+        if (hasDrawings) {
+          const issues = state.drawingIssues.filter(i => !state.drawingDismissed.has(i.id));
+          body += `
+            <h2 style="font-size:13pt;font-weight:600;color:#111;border-bottom:2px solid #e8e8e8;padding-bottom:8px;margin:32px 0 16px;">Drawing Set</h2>
+            <p style="font-size:10pt;color:#666;margin:0 0 20px;">${state.drawingFilename} &nbsp;·&nbsp; ${state.drawingSheets.length} sheets, ${state.drawingTotalPages} pages &nbsp;·&nbsp; ${issues.filter(i=>i.type==='error').length} errors, ${issues.filter(i=>i.type==='warning').length} warnings, ${issues.filter(i=>i.type==='note').length} notes</p>
+            <h3 style="font-size:11pt;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.06em;margin:0 0 12px;">Grade</h3>
+            ${renderGradeTable(state.drawingGrade)}
+            <h3 style="font-size:11pt;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.06em;margin:28px 0 12px;">Issues</h3>
+            ${renderIssueRows(issues)}`;
+        }
+
+        body += `</div>`;
+
+        const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+          xmlns:w="urn:schemas-microsoft-com:office:word"
+          xmlns="http://www.w3.org/TR/REC-html40">
+          <head><meta charset="UTF-8">
+          <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View></w:WordDocument></xml><![endif]-->
+          <style>body{font-family:Calibri,sans-serif;}</style>
+          </head><body>${body}</body></html>`;
+
+        const basename = (state.filename || state.drawingFilename || 'documents').replace(/\.pdf$/i, '');
+        const blob = new Blob([html], { type: 'application/msword' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `qaqc-report-${basename}.doc`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+
+      // ── UI helpers ───────────────────────────────────────────────────────
+      function switchTab(name, el) {
+        document.querySelectorAll('.panel-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+        el.classList.add('active');
+        document.getElementById('tab-' + name).classList.add('active');
+      }
+
+      function switchTabByName(name) {
+        document.querySelectorAll('.panel-tab').forEach(t => {
+          const btnId = `tab-btn-${name}`;
+          t.classList.toggle('active', t.id === btnId);
+        });
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+        const target = document.getElementById('tab-' + name);
+        if (target) target.classList.add('active');
+      }
+
+      function toggleExplainer(header) {
+        header.classList.toggle('open');
+        header.nextElementSibling.classList.toggle('open');
+      }
+
+      function addQuestion(btn) {
+        document.getElementById('chat-input').value = btn.textContent.trim();
+        document.getElementById('chat-input').focus();
+      }
+
+      // ── Cycling info panel ───────────────────────────────────────────────
+      const CYCLE_SLIDES = [
+        {
+          cat: 'Specification', catClass: 'cat-spec', metric: '30 pts',
+          title: 'Cross-section consistency',
+          body: 'When one section references a product or requirement from another, both sides are verified for agreement. A concrete section calling for rebar per a steel section that specifies something different — or doesn\'t exist — is flagged as an error.',
+        },
+        {
+          cat: 'Specification', catClass: 'cat-spec', metric: '20 pts',
+          title: 'Standards & edition currency',
+          body: 'Every referenced standard — ACI 318, ASTM A615, AISC 360, IBC — is checked against known current editions. Outdated editions can trigger permit review comments or contractor disputes over applicable requirements.',
+        },
+        {
+          cat: 'Specification', catClass: 'cat-spec', metric: '20 pts',
+          title: 'Spec-to-drawing coordination',
+          body: 'Specification language that implies a drawing detail (e.g., "as shown") is cross-checked for consistency. Conflicts between specified materials and what the drawings call for are flagged for coordination.',
+        },
+        {
+          cat: 'Specification', catClass: 'cat-spec', metric: '15 pts',
+          title: 'Internal cross-references',
+          body: 'References within a section — "see Article 2.3" or "as specified in Part 1" — are verified to point to something that actually exists. Dangling references confuse contractors and create RFIs.',
+        },
+        {
+          cat: 'Specification', catClass: 'cat-spec', metric: '10 pts',
+          title: 'CSI 3-Part format compliance',
+          body: 'Every section should follow Part 1 General, Part 2 Products, Part 3 Execution. Missing or misplaced parts indicate incomplete sections that may be unenforceable or ambiguous in the field.',
+        },
+        {
+          cat: 'Specification', catClass: 'cat-spec', metric: '5 pts',
+          title: 'Submittal requirements',
+          body: 'Sections specifying materials or equipment should define what submittals are required — shop drawings, product data, samples. Missing submittal clauses leave scope undefined and generate claims.',
+        },
+        {
+          cat: 'Drawing Set', catClass: 'cat-drawings', metric: '25 pts',
+          title: 'Sheet index completeness',
+          body: 'The drawing index on the cover sheet is compared against every sheet actually present in the PDF. Missing sheets, unlisted sheets, and sheet number gaps are all flagged — including when the index says A-201 but the sheet reads A-200.',
+        },
+        {
+          cat: 'Drawing Set', catClass: 'cat-drawings', metric: '20 pts',
+          title: 'Title block compliance',
+          body: 'Every sheet is visually inspected for required title block fields: project name, sheet number, title, revision level, date, and firm name. Blank or inconsistent fields on issued drawings are flagged as errors.',
+        },
+        {
+          cat: 'Drawing Set', catClass: 'cat-drawings', metric: '30 pts',
+          title: 'Spec cross-reference in notes',
+          body: 'Drawing notes that cite specification sections (e.g., "See Spec 03 30 00 — Cast-in-Place Concrete") are verified to reference plausible sections for the content shown. Notes that should reference specs but don\'t are also flagged.',
+        },
+        {
+          cat: 'Drawing Set', catClass: 'cat-drawings', metric: '15 pts',
+          title: 'Code compliance notations',
+          body: 'Required code notations are checked for presence: IBC occupancy classification on the cover, fire ratings called out on rated assemblies, egress path widths and travel distances, ADA compliance notes on accessible routes.',
+        },
+        {
+          cat: 'Drawing Set', catClass: 'cat-drawings', metric: '10 pts',
+          title: 'Drawing standards',
+          body: 'Each sheet is checked for basic drawing standards: scale indicated, north arrow on plan views, dimensions present, symbols defined in a legend, and consistent line weights between sheets of the same discipline.',
+        },
+        {
+          cat: 'How it works', catClass: 'cat-process', metric: null,
+          title: 'The full document in one context',
+          body: 'No chunking, no retrieval. The entire specification or drawing text is analyzed in a single pass so every cross-reference check runs against the whole document at once — not isolated paragraphs.',
+        },
+        {
+          cat: 'How it works', catClass: 'cat-process', metric: null,
+          title: 'Vision analysis for drawing sets',
+          body: 'Drawing PDFs are processed two ways: text is extracted from all pages for title blocks, schedules, and general notes — and the first 15 sheets are rendered as images and read visually to catch what text extraction misses.',
+        },
+        {
+          cat: 'How it works', catClass: 'cat-process', metric: null,
+          title: 'A weighted rubric, not a checklist',
+          body: 'Issues are scored by severity and category. Errors deduct full points, warnings deduct half, notes flag for review with no deduction. The final letter grade reflects the document\'s overall QA/QC readiness — not just a count of findings.',
+        },
+        {
+          cat: 'How it works', catClass: 'cat-process', metric: null,
+          title: 'Results live in this browser session only',
+          body: 'Uploaded documents and analysis results are not saved to any server or database. If you refresh or close the page, everything is gone. Export your report to a Word file before closing — that\'s the only persistent record.',
+        },
+      ];
+
+      let cycleIdx = 0;
+      let cycleTimer = null;
+
+      function buildCyclePanel() {
+        const area = document.getElementById('cycle-slide-area');
+        const dotsEl = document.getElementById('cycle-dots');
+        area.innerHTML = '';
+        dotsEl.innerHTML = '';
+
+        CYCLE_SLIDES.forEach((s, i) => {
+          const slide = document.createElement('div');
+          slide.className = 'cycle-slide' + (i === 0 ? ' active' : '');
+          slide.id = `cycle-slide-${i}`;
+          slide.innerHTML = `
+            <div class="cycle-slide-top">
+              <span class="cycle-cat ${s.catClass}">${s.cat}</span>
+              ${s.metric ? `<span class="cycle-metric">${s.metric}</span>` : ''}
+            </div>
+            <div class="cycle-slide-title">${s.title}</div>
+            <div class="cycle-slide-body">${s.body}</div>
+          `;
+          area.appendChild(slide);
+
+          const dot = document.createElement('div');
+          dot.className = 'cycle-dot' + (i === 0 ? ' active' : '');
+          dot.onclick = () => cycleGoTo(i);
+          dotsEl.appendChild(dot);
+        });
+
+        startCycleTimer();
+      }
+
+      function cycleGoTo(idx, dir) {
+        const slides = document.querySelectorAll('.cycle-slide');
+        const dots = document.querySelectorAll('.cycle-dot');
+
+        slides[cycleIdx].classList.remove('active');
+        slides[cycleIdx].classList.add('exit');
+        setTimeout(() => slides[cycleIdx < slides.length ? cycleIdx : 0]?.classList.remove('exit'), 400);
+
+        dots[cycleIdx].classList.remove('active');
+        cycleIdx = (idx + CYCLE_SLIDES.length) % CYCLE_SLIDES.length;
+        slides[cycleIdx].classList.add('active');
+        dots[cycleIdx].classList.add('active');
+
+        resetCycleTimer();
+      }
+
+      function cycleNext() { cycleGoTo(cycleIdx + 1); }
+      function cyclePrev() { cycleGoTo(cycleIdx - 1); }
+
+      function startCycleTimer() {
+        cycleTimer = setInterval(() => cycleGoTo(cycleIdx + 1), 5000);
+      }
+
+      function resetCycleTimer() {
+        clearInterval(cycleTimer);
+        startCycleTimer();
+      }
+
+      buildCyclePanel();
+    </script>
+  </body>
+</html>
