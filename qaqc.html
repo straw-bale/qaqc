@@ -2384,7 +2384,7 @@
         // Explicit spec keywords
         if (/spec|manual|project.manual|masterspec|division|csi|pm[_\-\s]/.test(s)) return 'spec';
         // Drawing keywords
-        if (/draw|sheet|plan|floor|elevation|section|detail|structural|mechanical|electrical|plumbing|civil|landscape|cd[_\-\s]|dd[_\-\s]|sd[_\-\s]|dwg|revit/.test(s)) return 'drawings';
+        if (/draw|sheet|plan|floor|elevation|section|detail|structural|mechanical|electrical|plumbing|civil|landscape|cd[_\-\s]|dd[_\-\s]|sd[_\-\s]|dwg|revit|construction.doc|const.doc/.test(s)) return 'drawings';
         // Fallback: first entry becomes spec, any subsequent becomes drawings
         return queued.some(q => q.type === 'spec') ? 'drawings' : 'spec';
       }
@@ -2629,9 +2629,12 @@
           bar.classList.add('error');
           bar.style.width = '100%';
           status.style.color = '#c05050';
-          const msg = err.message.includes('fetch')
-            ? 'Cannot reach server. Run: uvicorn server:app --reload'
-            : err.message;
+          let msg = err.message;
+          if (msg.includes('fetch') || msg.includes('NetworkError')) {
+            msg = 'Cannot reach server. Is the backend running?';
+          } else if (msg === 'Spec upload failed' || msg === 'Drawing upload failed') {
+            msg = msg + ' — server may have timed out on a large file. Try again.';
+          }
           status.textContent = msg;
           document.getElementById('upload-retry').style.display = 'block';
         }

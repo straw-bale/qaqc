@@ -68,11 +68,13 @@ def extract_pdf_text(data: bytes) -> str:
 
 
 # ── Drawing PDF extraction (text + page images) ────────────────────────────
-MAX_DRAWING_IMAGE_PAGES = 15
+# Max visual pages: JPEG keeps each image ~80-120KB vs ~3MB PNG, so 50 pages is safe
+# on memory. Context window limit at 0.65 scale is ~60 pages; cap at 55 to stay safe.
+MAX_DRAWING_IMAGE_PAGES = 55
 
 
 def extract_drawing_pages(data: bytes) -> tuple[str, list[dict], int]:
-    """Returns (page-annotated full text, list of {page_num, b64_png}, total_pages)."""
+    """Returns (page-annotated full text, list of {page_num, b64_jpeg}, total_pages)."""
     with pdfplumber.open(io.BytesIO(data)) as pdf:
         total = len(pdf.pages)
         parts = []
@@ -81,15 +83,22 @@ def extract_drawing_pages(data: bytes) -> tuple[str, list[dict], int]:
             parts.append(f"[PAGE {i + 1}]\n{txt}" if txt else f"[PAGE {i + 1} — no extractable text]")
     full_text = "\n\n".join(parts)
 
+    # Open fitz after pdfplumber is closed to avoid holding two PDF copies in memory.
+    # JPEG output is 20-30x smaller than PNG for drawing content, keeping memory low
+    # even for large sets while covering every page visually.
     doc = fitz.open(stream=data, filetype="pdf")
     page_images = []
-    for i in range(min(MAX_DRAWING_IMAGE_PAGES, len(doc))):
-        pix = doc[i].get_pixmap(matrix=fitz.Matrix(0.75, 0.75))
-        page_images.append({
-            "page_num": i + 1,
-            "b64_png": base64.b64encode(pix.tobytes("png")).decode(),
-        })
-    doc.close()
+    try:
+        for i in range(min(MAX_DRAWING_IMAGE_PAGES, len(doc))):
+            pix = doc[i].get_pixmap(matrix=fitz.Matrix(0.65, 0.65))
+            page_images.append({
+                "page_num": i + 1,
+                "b64": base64.b64encode(pix.tobytes("jpeg")).decode(),
+                "media_type": "image/jpeg",
+            })
+            del pix  # free pixmap memory immediately after encoding
+    finally:
+        doc.close()
 
     return full_text, page_images, total
 
@@ -616,8 +625,8 @@ async def upload_drawings(file: UploadFile = File(...)):
             "type": "image",
             "source": {
                 "type": "base64",
-                "media_type": "image/png",
-                "data": pg["b64_png"],
+                "media_type": pg["media_type"],
+                "data": pg["b64"],
             },
         })
     content.append({
