@@ -3,6 +3,7 @@ import io
 import json
 import os
 import re
+import tempfile
 
 import anthropic
 import fitz  # PyMuPDF
@@ -68,14 +69,14 @@ def extract_pdf_text(data: bytes) -> str:
 
 
 # ── Drawing PDF extraction (text + page images) ────────────────────────────
-# Max visual pages: JPEG keeps each image ~80-120KB vs ~3MB PNG, so 50 pages is safe
-# on memory. Context window limit at 0.65 scale is ~60 pages; cap at 55 to stay safe.
+# Context window limit at 0.65 scale is ~60 pages; cap at 55 to stay safe.
 MAX_DRAWING_IMAGE_PAGES = 55
 
 
-def extract_drawing_pages(data: bytes) -> tuple[str, list[dict], int]:
-    """Returns (page-annotated full text, list of {page_num, b64_jpeg}, total_pages)."""
-    with pdfplumber.open(io.BytesIO(data)) as pdf:
+def extract_drawing_pages(pdf_path: str) -> tuple[str, list[dict], int]:
+    """Returns (page-annotated full text, list of {page_num, b64, media_type}, total_pages).
+    Accepts a file path so neither pdfplumber nor fitz need to copy bytes into RAM."""
+    with pdfplumber.open(pdf_path) as pdf:
         total = len(pdf.pages)
         parts = []
         for i, p in enumerate(pdf.pages):
@@ -83,10 +84,9 @@ def extract_drawing_pages(data: bytes) -> tuple[str, list[dict], int]:
             parts.append(f"[PAGE {i + 1}]\n{txt}" if txt else f"[PAGE {i + 1} — no extractable text]")
     full_text = "\n\n".join(parts)
 
-    # Open fitz after pdfplumber is closed to avoid holding two PDF copies in memory.
-    # JPEG output is 20-30x smaller than PNG for drawing content, keeping memory low
-    # even for large sets while covering every page visually.
-    doc = fitz.open(stream=data, filetype="pdf")
+    # fitz opens from disk — no in-memory PDF copy, minimal RAM overhead.
+    # JPEG output is ~20x smaller than PNG so all 55 pages stay well under 512MB.
+    doc = fitz.open(pdf_path)
     page_images = []
     try:
         for i in range(min(MAX_DRAWING_IMAGE_PAGES, len(doc))):
@@ -96,7 +96,7 @@ def extract_drawing_pages(data: bytes) -> tuple[str, list[dict], int]:
                 "b64": base64.b64encode(pix.tobytes("jpeg")).decode(),
                 "media_type": "image/jpeg",
             })
-            del pix  # free pixmap memory immediately after encoding
+            del pix  # free each pixmap immediately after encoding
     finally:
         doc.close()
 
@@ -142,8 +142,22 @@ def parse_clauses(section_text: str) -> list:
 # ── Spec analysis prompt ───────────────────────────────────────────────────
 SPEC_ANALYSIS_PROMPT = """\
 You are an expert construction specification reviewer with deep knowledge of \
-CSI MasterFormat, ACI, ASTM, AISC, and related standards used in architectural \
-and structural specifications.
+CSI MasterFormat and the standards used in Pennsylvania architectural and structural \
+specifications. Projects in Pennsylvania fall under the Pennsylvania Uniform \
+Construction Code (UCC), which adopts the following current editions:
+  - IBC 2018 (International Building Code, effective PA 2022)
+  - IFC 2018 (International Fire Code)
+  - IPC 2018 (International Plumbing Code)
+  - IMC 2018 (International Mechanical Code)
+  - IECC 2018 / ASHRAE 90.1-2016 (energy)
+  - NEC 2017 / NFPA 70 (electrical)
+  - ICC/ANSI A117.1-2017 (accessibility, referenced by IBC)
+  - ADA 2010 Standards for Accessible Design
+  - ASCE 7-16 (structural loads, referenced by IBC 2018)
+  - ACI 318-14 (concrete, referenced by IBC 2018)
+  - AISC 360-16 (steel, referenced by IBC 2018)
+  - AWC NDS 2018 (wood, referenced by IBC 2018)
+Flag any specification references to superseded editions of these standards as errors.
 
 Analyze the specification text below and return ONLY valid JSON — no markdown \
 fences, no commentary outside the JSON object.
@@ -203,7 +217,18 @@ DRAWING_ANALYSIS_PROMPT = """\
 You are a QA/QC reviewer for R3A Architecture. Analyze the provided drawing set \
 against the firm's official per-sheet deliverable checklist below. You have:
   1. Extracted text from all pages (title blocks, general notes, schedules, tags)
-  2. Visual images of the first sheets for direct inspection
+  2. Visual images of sheets for direct inspection
+
+This project is in Pennsylvania. Apply the Pennsylvania Uniform Construction Code (UCC), \
+which adopts these current editions:
+  - IBC 2018 (effective PA 2022), IFC 2018, IPC 2018, IMC 2018
+  - IECC 2018 / ASHRAE 90.1-2016, NEC 2017 / NFPA 70
+  - ICC/ANSI A117.1-2017, ADA 2010 Standards
+  - ASCE 7-16, ACI 318-14, AISC 360-16, AWC NDS 2018
+
+IMPORTANT — pages marked "[PAGE X — no extractable text]" are image-based (rasterized) \
+sheets. Use the provided visual images to inspect those pages. Do NOT list them as blank \
+or skip them — analyze their visible content from the images.
 
 Return ONLY valid JSON — no markdown fences, no commentary outside the JSON.
 
@@ -515,9 +540,14 @@ GRADING RUBRIC — use EXACTLY these 5 metrics:
 Letter grades: A=90-100, B=80-89, C=70-79, D=60-69, F<60. Use + and - for borderline scores.
 
 INSTRUCTIONS:
+- First, identify which disciplines are present in the uploaded set (e.g., Architectural only, or Architectural + Structural + MEP, etc.).
+- Grade and check ONLY the disciplines and sheet series actually present. Do not penalize for absent consultant disciplines — a set of architectural sheets only should be graded as a complete architectural submission, not a failing full-CD set.
+- If the set appears to be a partial submission (e.g., architectural only), note the scope in findings but do not deduct points for missing consultant sheets.
 - For each sheet found, identify its sheet series and apply the matching checklist above.
 - Apply General Items (G.1–G.23) and Title Block checks (TB-1–TB-9) to every sheet.
 - Report every violation as an issue with the checklist_ref from the checklist above.
+- For pages with no extractable text, rely on the visual images provided — never mark a sheet as blank if a visual image is available for it.
+- Flag any code references that do not match the current Pennsylvania UCC editions listed above.
 - Focus on what is verifiable from extracted text and visual images — do not speculate about Revit model internals.
 - Be specific: quote actual text from the drawing when flagging an issue.
 
@@ -608,47 +638,56 @@ async def upload(file: UploadFile = File(...)):
 # ── Drawing upload endpoint ────────────────────────────────────────────────
 @app.post("/upload-drawings")
 async def upload_drawings(file: UploadFile = File(...)):
-    data = await file.read()
-
+    # Stream upload to a temp file so the PDF bytes never live in RAM
+    # alongside fitz's internal structures (which would double memory usage).
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
     try:
-        full_text, page_images, total_pages = extract_drawing_pages(data)
-    except Exception as exc:
-        raise HTTPException(400, f"PDF parse error: {exc}")
+        with os.fdopen(tmp_fd, "wb") as tmp:
+            while chunk := await file.read(1024 * 1024):  # 1MB chunks
+                tmp.write(chunk)
 
-    # Build multimodal content: text prompt + page image blocks
-    content: list = [
-        {"type": "text", "text": DRAWING_ANALYSIS_PROMPT + full_text[:120_000]},
-    ]
-    for pg in page_images:
-        content.append({"type": "text", "text": f"\n[Visual — page {pg['page_num']}:]"})
+        try:
+            full_text, page_images, total_pages = extract_drawing_pages(tmp_path)
+        except Exception as exc:
+            raise HTTPException(400, f"PDF parse error: {exc}")
+
+        # Build multimodal content: text prompt + page image blocks
+        content: list = [
+            {"type": "text", "text": DRAWING_ANALYSIS_PROMPT + full_text[:120_000]},
+        ]
+        for pg in page_images:
+            content.append({"type": "text", "text": f"\n[Visual — page {pg['page_num']}:]"})
+            content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": pg["media_type"],
+                    "data": pg["b64"],
+                },
+            })
         content.append({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": pg["media_type"],
-                "data": pg["b64"],
-            },
+            "type": "text",
+            "text": (
+                f"\n\nTotal pages in document: {total_pages}. "
+                f"Visual samples shown: {len(page_images)} pages."
+            ),
         })
-    content.append({
-        "type": "text",
-        "text": (
-            f"\n\nTotal pages in document: {total_pages}. "
-            f"Visual samples shown: {len(page_images)} pages."
-        ),
-    })
 
-    try:
-        msg = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=16000,
-            messages=[{"role": "user", "content": content}],
-        )
-        raw_json = strip_fences(msg.content[0].text)
-        result = json.loads(raw_json)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(500, f"Claude returned malformed JSON: {exc}")
-    except anthropic.APIError as exc:
-        raise HTTPException(502, f"Claude API error: {exc}")
+        try:
+            msg = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=16000,
+                messages=[{"role": "user", "content": content}],
+            )
+            raw_json = strip_fences(msg.content[0].text)
+            result = json.loads(raw_json)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(500, f"Claude returned malformed JSON: {exc}")
+        except anthropic.APIError as exc:
+            raise HTTPException(502, f"Claude API error: {exc}")
+
+    finally:
+        os.unlink(tmp_path)
 
     sheets: list = result.get("sheets", [])
     issues: list = result.get("issues", [])
