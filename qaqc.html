@@ -2134,6 +2134,7 @@
 
     <script>
       const API = '';
+      const PAGES_PER_BATCH = 15; // must match server.py PAGES_PER_BATCH
 
       // ── Pending upload state ─────────────────────────────────────────────
       const pending = { spec: null, drawings: null };
@@ -2526,6 +2527,7 @@
         const hasSpec     = !!pendingSpec;
         const hasDrawings = !!pendingDrawings;
         const specShare   = hasSpec && hasDrawings ? 50 : 100;
+        let workspaceRevealed = false;
 
         try {
           // ── Spec ──────────────────────────────────────────────────────
@@ -2570,60 +2572,137 @@
             const fd = new FormData();
             fd.append('file', pendingDrawings);
 
-            bar.style.width = (base + 15) + '%';
-            status.textContent = 'Extracting and visually analyzing drawings (this may take 30–60 s)…';
+            bar.style.width = (base + 10) + '%';
+            status.textContent = 'Rendering pages at full resolution…';
 
             const resp = await fetch(`${API}/upload-drawings`, { method: 'POST', body: fd });
             if (!resp.ok) {
               const e = await resp.json().catch(() => ({ detail: resp.statusText }));
               throw new Error(e.detail || 'Drawing upload failed');
             }
-            const data = await resp.json();
 
-            bar.style.width = '95%';
-            status.textContent = 'Drawing set analysis complete.';
-
-            state.drawingFilename = data.filename;
-            state.drawingTotalPages = data.total_pages;
-            state.drawingSheets = data.sheets;
-            state.drawingIssues = data.issues;
-            state.drawingGrade = data.grade;
-            state.currentSheet = data.sheets[0]?.number || null;
+            // Read NDJSON stream — each line is a JSON event from the server.
+            state.drawingSheets = [];
+            state.drawingIssues = [];
+            state.drawingGrade = {};
             state.drawingDismissed = new Set();
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = '';
+
+            outer: while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buf += decoder.decode(value, { stream: true });
+              const lines = buf.split('\n');
+              buf = lines.pop(); // keep any incomplete trailing line
+
+              for (const line of lines) {
+                if (!line.trim()) continue;
+                let evt;
+                try { evt = JSON.parse(line); } catch { continue; }
+
+                if (evt.event === 'error') {
+                  throw new Error(evt.message || 'Drawing analysis failed');
+                }
+
+                if (evt.event === 'batch') {
+                  // Merge sheets (deduplicate by number)
+                  for (const s of (evt.sheets || [])) {
+                    if (!state.drawingSheets.some(x => x.number === s.number)) {
+                      state.drawingSheets.push(s);
+                    }
+                  }
+                  state.drawingIssues.push(...(evt.issues || []));
+                  if (!state.drawingFilename) {
+                    state.drawingFilename = evt.filename;
+                    state.drawingTotalPages = evt.total_pages;
+                    state.currentSheet = state.drawingSheets[0]?.number || null;
+                  }
+
+                  const pct = base + 10 + Math.round((evt.batch_num / evt.total_batches) * 75);
+                  bar.style.width = pct + '%';
+                  status.textContent = `Batch ${evt.batch_num} of ${evt.total_batches} complete — pages ${evt.page_start}–${evt.page_end} analyzed`;
+
+                  // Reveal workspace after the first batch so users can review immediately.
+                  if (!workspaceRevealed) {
+                    workspaceRevealed = true;
+                    if (pendingSpec && !state.specObjectUrl) {
+                      state.specObjectUrl = URL.createObjectURL(pendingSpec);
+                    }
+                    if (pendingDrawings && !state.drawingsObjectUrl) {
+                      state.drawingsObjectUrl = URL.createObjectURL(pendingDrawings);
+                    }
+                    document.getElementById('upload-overlay').classList.add('hidden');
+                    document.getElementById('workspace').style.display = 'flex';
+                    document.getElementById('view-toggle').style.display = 'flex';
+                    document.getElementById('session-note').style.display = 'flex';
+                    state.docView = 'analysis';
+                    setDocView('analysis');
+                    updateTopbarMeta();
+                    switchTabByName('sheets');
+                    renderCurrentDoc();
+                  }
+
+                  // Update live UI if more batches remain.
+                  if (evt.batch_num < evt.total_batches) {
+                    const nextEnd = Math.min(evt.page_end + PAGES_PER_BATCH, evt.total_pages);
+                    document.getElementById('analyze-bar').style.display = 'flex';
+                    document.getElementById('analyze-bar-text').textContent =
+                      `Analyzing pages ${evt.page_end + 1}–${nextEnd} of ${evt.total_pages} (batch ${evt.batch_num + 1} of ${evt.total_batches})…`;
+                  } else {
+                    document.getElementById('analyze-bar').style.display = 'flex';
+                    document.getElementById('analyze-bar-text').textContent = 'Grading…';
+                  }
+                  renderSheetsTab();
+                }
+
+                if (evt.event === 'done') {
+                  state.drawingFilename = evt.filename;
+                  state.drawingTotalPages = evt.total_pages;
+                  state.drawingGrade = evt.grade || {};
+                  bar.style.width = '100%';
+                  status.textContent = 'Analysis complete.';
+                  document.getElementById('analyze-bar').style.display = 'none';
+                  renderGradeTab();
+                  renderSheetsTab();
+                  updateTopbarMeta();
+                }
+              }
+            }
           }
 
-          bar.style.width = '100%';
-          status.textContent = 'Analysis complete.';
+          if (!hasDrawings) {
+            bar.style.width = '100%';
+            status.textContent = 'Analysis complete.';
+          }
 
-          setTimeout(() => {
-            // Create object URLs for PDF reference view
-            if (pendingSpec) {
-              if (state.specObjectUrl) URL.revokeObjectURL(state.specObjectUrl);
-              state.specObjectUrl = URL.createObjectURL(pendingSpec);
-            }
-            if (pendingDrawings) {
-              if (state.drawingsObjectUrl) URL.revokeObjectURL(state.drawingsObjectUrl);
-              state.drawingsObjectUrl = URL.createObjectURL(pendingDrawings);
-            }
-
-            document.getElementById('upload-overlay').classList.add('hidden');
-            document.getElementById('workspace').style.display = 'flex';
-
-            updateTopbarMeta();
-
-            // Show source PDF toggle and session note
-            document.getElementById('view-toggle').style.display = 'flex';
-            document.getElementById('session-note').style.display = 'flex';
-            state.docView = 'analysis';
-            setDocView('analysis');
-
-            applyDocMode(null, true);
-            renderAll();
-
-            switchTabByName('grade');
-            state.chatHistory = [];
-            initChat();
-          }, 500);
+          // For spec-only uploads: reveal workspace now (drawings already revealed inline above).
+          if (!workspaceRevealed) {
+            setTimeout(() => {
+              if (pendingSpec) {
+                if (state.specObjectUrl) URL.revokeObjectURL(state.specObjectUrl);
+                state.specObjectUrl = URL.createObjectURL(pendingSpec);
+              }
+              if (pendingDrawings) {
+                if (state.drawingsObjectUrl) URL.revokeObjectURL(state.drawingsObjectUrl);
+                state.drawingsObjectUrl = URL.createObjectURL(pendingDrawings);
+              }
+              document.getElementById('upload-overlay').classList.add('hidden');
+              document.getElementById('workspace').style.display = 'flex';
+              document.getElementById('view-toggle').style.display = 'flex';
+              document.getElementById('session-note').style.display = 'flex';
+              state.docView = 'analysis';
+              setDocView('analysis');
+              updateTopbarMeta();
+              applyDocMode(null, true);
+              renderAll();
+              switchTabByName('grade');
+              state.chatHistory = [];
+              initChat();
+            }, 500);
+          }
 
         } catch (err) {
           bar.classList.add('error');

@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import json
@@ -11,7 +12,7 @@ import pdfplumber
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 load_dotenv()
@@ -69,8 +70,12 @@ def extract_pdf_text(data: bytes) -> str:
 
 
 # ── Drawing PDF extraction (text + page images) ────────────────────────────
-# Context window limit at 0.65 scale is ~60 pages; cap at 55 to stay safe.
-MAX_DRAWING_IMAGE_PAGES = 55
+# 2× scale = 144 DPI effective — legible for fine text and hairline work.
+# JPEG quality 90 minimises compression artefacts on line drawings.
+# All pages are rendered; batching in the endpoint handles context limits.
+RENDER_SCALE = 2.0
+JPEG_QUALITY = 90
+PAGES_PER_BATCH = 15  # pages per Claude vision call at 2× scale
 
 
 def extract_drawing_pages(pdf_path: str) -> tuple[str, list[dict], int]:
@@ -85,15 +90,14 @@ def extract_drawing_pages(pdf_path: str) -> tuple[str, list[dict], int]:
     full_text = "\n\n".join(parts)
 
     # fitz opens from disk — no in-memory PDF copy, minimal RAM overhead.
-    # JPEG output is ~20x smaller than PNG so all 55 pages stay well under 512MB.
     doc = fitz.open(pdf_path)
     page_images = []
     try:
-        for i in range(min(MAX_DRAWING_IMAGE_PAGES, len(doc))):
-            pix = doc[i].get_pixmap(matrix=fitz.Matrix(0.65, 0.65))
+        for i in range(len(doc)):
+            pix = doc[i].get_pixmap(matrix=fitz.Matrix(RENDER_SCALE, RENDER_SCALE))
             page_images.append({
                 "page_num": i + 1,
-                "b64": base64.b64encode(pix.tobytes("jpeg")).decode(),
+                "b64": base64.b64encode(pix.tobytes("jpeg", jpg_quality=JPEG_QUALITY)).decode(),
                 "media_type": "image/jpeg",
             })
             del pix  # free each pixmap immediately after encoding
@@ -212,12 +216,13 @@ Letter grades: A=90-100, B=80-89, C=70-79, D=60-69, F<60. Use + and - for border
 SPECIFICATION TEXT:
 """
 
-# ── Drawing analysis prompt ────────────────────────────────────────────────
-DRAWING_ANALYSIS_PROMPT = """\
-You are a QA/QC reviewer for R3A Architecture. Analyze the provided drawing set \
+# ── Drawing batch analysis prompt ──────────────────────────────────────────
+# Used for each batch of pages. Returns sheets + issues only (no grade).
+DRAWING_BATCH_PROMPT = """\
+You are a QA/QC reviewer for R3A Architecture. Analyze the provided batch of drawing pages \
 against the firm's official per-sheet deliverable checklist below. You have:
-  1. Extracted text from all pages (title blocks, general notes, schedules, tags)
-  2. Visual images of sheets for direct inspection
+  1. Extracted text from ALL pages in the document (title blocks, general notes, schedules, tags)
+  2. High-resolution visual images of THIS BATCH of sheets for direct inspection
 
 This project is in Pennsylvania. Apply the Pennsylvania Uniform Construction Code (UCC), \
 which adopts these current editions:
@@ -231,6 +236,7 @@ sheets. Use the provided visual images to inspect those pages. Do NOT list them 
 or skip them — analyze their visible content from the images.
 
 Return ONLY valid JSON — no markdown fences, no commentary outside the JSON.
+Do NOT include a "grade" field — grading is performed after all batches are merged.
 
 Return this exact shape:
 {
@@ -253,21 +259,7 @@ Return this exact shape:
       "description": "One-line issue summary",
       "detail": "Full explanation with recommended corrective action"
     }
-  ],
-  "grade": {
-    "overall_score": 82,
-    "letter": "B",
-    "metrics": [
-      {
-        "name": "Title Block & Sheet Organization",
-        "category": "Completeness & Organization",
-        "max_pts": 20,
-        "score": 16,
-        "detail": "Explanation of scoring",
-        "findings": [{ "type": "error", "text": "Finding", "pts_delta": -4 }]
-      }
-    ]
-  }
+  ]
 }
 
 Issue types:
@@ -277,7 +269,7 @@ Issue types:
 
 checklist_ref: reference the checklist section and item number (e.g. "G.1-G.5", "G.2-001", "1.2-009").
 
-For "sheets": list every sheet found in the drawing index or title blocks in document order.
+For "sheets": list ONLY the sheets whose visual images appear in this batch.
 Discipline values: Architectural, Structural, Civil, Mechanical, Electrical, Plumbing, Landscape, General, Other.
 
 ═══════════════════════════════════════════
@@ -529,8 +521,46 @@ AQ101 — EQUIPMENT PLANS:
 003  Tags per piece of equipment with leaders for clarity.
 004  Equipment General Notes reviewed for applicability.
 
-═══════════════════════════════════════════
-GRADING RUBRIC — use EXACTLY these 5 metrics:
+INSTRUCTIONS:
+- List in "sheets" ONLY the sheets visually present in this batch's page images.
+- Report in "issues" ALL issues identifiable in this batch — from both visual inspection and cross-referencing the extracted text.
+- Cross-sheet issues detectable from the extracted text (inconsistent terminology, mismatched tags, numbering errors) should be reported even if the affected sheets are not in this batch.
+- For pages marked "[PAGE X — no extractable text]", use the visual image — never mark as blank or skip.
+- Be specific: quote actual text from the drawing when flagging an issue.
+- Flag any code references not matching the current Pennsylvania UCC editions listed above.
+- Focus on what is verifiable from extracted text and visual images — do not speculate about Revit model internals.
+
+EXTRACTED TEXT FROM ENTIRE DRAWING SET (use for cross-reference context):
+"""
+
+# ── Drawing grade prompt ───────────────────────────────────────────────────
+# Separate text-only call after all batches are merged.
+DRAWING_GRADE_PROMPT = """\
+You are completing a QA/QC review of an architectural drawing set for R3A Architecture. \
+Based on the full sheet inventory and all issues identified by visual inspection of every page, \
+assign overall grades using the rubric below.
+
+Return ONLY valid JSON — no markdown fences, no commentary outside the JSON.
+
+Return this exact shape:
+{
+  "grade": {
+    "overall_score": 82,
+    "letter": "B",
+    "metrics": [
+      {
+        "name": "Title Block & Sheet Organization",
+        "category": "Completeness & Organization",
+        "max_pts": 20,
+        "score": 16,
+        "detail": "Explanation of scoring",
+        "findings": [{ "type": "error", "text": "Finding", "pts_delta": -4 }]
+      }
+    ]
+  }
+}
+
+GRADING RUBRIC — use EXACTLY these 5 metrics in this order:
   1. Title Block & Sheet Organization    20 pts  (category: Completeness & Organization)
   2. General Standards Compliance        25 pts  (category: General Standards)
   3. Sheet-Specific Content              30 pts  (category: Sheet Content)
@@ -539,19 +569,9 @@ GRADING RUBRIC — use EXACTLY these 5 metrics:
 
 Letter grades: A=90-100, B=80-89, C=70-79, D=60-69, F<60. Use + and - for borderline scores.
 
-INSTRUCTIONS:
-- First, identify which disciplines are present in the uploaded set (e.g., Architectural only, or Architectural + Structural + MEP, etc.).
-- Grade and check ONLY the disciplines and sheet series actually present. Do not penalize for absent consultant disciplines — a set of architectural sheets only should be graded as a complete architectural submission, not a failing full-CD set.
-- If the set appears to be a partial submission (e.g., architectural only), note the scope in findings but do not deduct points for missing consultant sheets.
-- For each sheet found, identify its sheet series and apply the matching checklist above.
-- Apply General Items (G.1–G.23) and Title Block checks (TB-1–TB-9) to every sheet.
-- Report every violation as an issue with the checklist_ref from the checklist above.
-- For pages with no extractable text, rely on the visual images provided — never mark a sheet as blank if a visual image is available for it.
-- Flag any code references that do not match the current Pennsylvania UCC editions listed above.
-- Focus on what is verifiable from extracted text and visual images — do not speculate about Revit model internals.
-- Be specific: quote actual text from the drawing when flagging an issue.
+Grade ONLY the disciplines present. Do not penalise for absent consultant disciplines — \
+an architectural-only set should be graded as a complete architectural submission.
 
-EXTRACTED TEXT FROM DRAWING SET:
 """
 
 
@@ -638,89 +658,180 @@ async def upload(file: UploadFile = File(...)):
 # ── Drawing upload endpoint ────────────────────────────────────────────────
 @app.post("/upload-drawings")
 async def upload_drawings(file: UploadFile = File(...)):
-    # Stream upload to a temp file so the PDF bytes never live in RAM
-    # alongside fitz's internal structures (which would double memory usage).
+    # Stream upload to a temp file — keeps PDF bytes off the heap while fitz renders.
     tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
     try:
         with os.fdopen(tmp_fd, "wb") as tmp:
-            while chunk := await file.read(1024 * 1024):  # 1MB chunks
+            while chunk := await file.read(1024 * 1024):  # 1 MB chunks
                 tmp.write(chunk)
 
         try:
-            full_text, page_images, total_pages = extract_drawing_pages(tmp_path)
+            full_text, page_images, total_pages = await asyncio.to_thread(
+                extract_drawing_pages, tmp_path
+            )
         except Exception as exc:
             raise HTTPException(400, f"PDF parse error: {exc}")
-
-        # Build multimodal content: text prompt + page image blocks
-        content: list = [
-            {"type": "text", "text": DRAWING_ANALYSIS_PROMPT + full_text[:120_000]},
-        ]
-        for pg in page_images:
-            content.append({"type": "text", "text": f"\n[Visual — page {pg['page_num']}:]"})
-            content.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": pg["media_type"],
-                    "data": pg["b64"],
-                },
-            })
-        content.append({
-            "type": "text",
-            "text": (
-                f"\n\nTotal pages in document: {total_pages}. "
-                f"Visual samples shown: {len(page_images)} pages."
-            ),
-        })
-
-        try:
-            msg = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=16000,
-                messages=[{"role": "user", "content": content}],
-            )
-            raw_json = strip_fences(msg.content[0].text)
-            result = json.loads(raw_json)
-        except json.JSONDecodeError as exc:
-            raise HTTPException(500, f"Claude returned malformed JSON: {exc}")
-        except anthropic.APIError as exc:
-            raise HTTPException(502, f"Claude API error: {exc}")
-
     finally:
-        os.unlink(tmp_path)
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
-    sheets: list = result.get("sheets", [])
-    issues: list = result.get("issues", [])
+    filename = file.filename
 
-    # Tally issue counts per sheet
-    sheet_counts: dict[str, dict] = {}
-    for iss in issues:
-        sn = iss.get("sheet_number", "")
-        if sn not in sheet_counts:
-            sheet_counts[sn] = {"errors": 0, "warnings": 0, "notes": 0}
-        t = iss.get("type", "note")
-        if t == "error":
-            sheet_counts[sn]["errors"] += 1
-        elif t == "warning":
-            sheet_counts[sn]["warnings"] += 1
-        else:
-            sheet_counts[sn]["notes"] += 1
-
-    for sheet in sheets:
-        sn = sheet.get("number", "")
-        sheet["issue_counts"] = sheet_counts.get(sn, {"errors": 0, "warnings": 0, "notes": 0})
-
+    # Make extracted text available for chat immediately, before streaming starts.
     doc_store["drawings"]["text"] = full_text
-    doc_store["drawings"]["filename"] = file.filename
+    doc_store["drawings"]["filename"] = filename
     doc_store["drawings"]["page_count"] = total_pages
 
-    return {
-        "filename": file.filename,
-        "total_pages": total_pages,
-        "sheets": sheets,
-        "issues": issues,
-        "grade": result.get("grade", {}),
-    }
+    batches = [
+        page_images[i : i + PAGES_PER_BATCH]
+        for i in range(0, len(page_images), PAGES_PER_BATCH)
+    ]
+    total_batches = len(batches)
+
+    async def generate():
+        all_sheets: list = []
+        all_issues: list = []
+        issue_counter = 0
+        prior_context = ""  # Rolling summary of findings; injected into each subsequent batch
+
+        for batch_idx, batch in enumerate(batches):
+            content: list = [
+                {"type": "text", "text": DRAWING_BATCH_PROMPT + full_text[:120_000]},
+            ]
+            for pg in batch:
+                content.append({"type": "text", "text": f"\n[Visual — page {pg['page_num']}:]"})
+                content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": pg["media_type"],
+                        "data": pg["b64"],
+                    },
+                })
+
+            # Tail: batch coordinates + rolling prior-batch context.
+            tail = (
+                f"\n\nTotal pages in document: {total_pages}. "
+                f"This batch covers pages {batch[0]['page_num']}–{batch[-1]['page_num']} "
+                f"(batch {batch_idx + 1} of {total_batches})."
+            )
+            if prior_context:
+                tail += prior_context
+            content.append({"type": "text", "text": tail})
+
+            try:
+                msg = await asyncio.to_thread(
+                    client.messages.create,
+                    model="claude-sonnet-4-6",
+                    max_tokens=24000,
+                    thinking={"type": "adaptive"},
+                    messages=[{"role": "user", "content": content}],
+                )
+                # Response may contain a thinking block; extract only the text block.
+                raw_text = next(b.text for b in msg.content if b.type == "text")
+                batch_result = json.loads(strip_fences(raw_text))
+            except Exception as exc:
+                yield json.dumps({"event": "error", "message": str(exc)}) + "\n"
+                return
+
+            batch_sheets = batch_result.get("sheets", [])
+            batch_issues = batch_result.get("issues", [])
+
+            # Assign stable IDs across batches before the client sees them.
+            for iss in batch_issues:
+                issue_counter += 1
+                iss["id"] = f"draw-issue-{issue_counter}"
+
+            # Tally issue counts per sheet for this batch.
+            batch_counts: dict[str, dict] = {}
+            for iss in batch_issues:
+                sn = iss.get("sheet_number", "")
+                if sn not in batch_counts:
+                    batch_counts[sn] = {"errors": 0, "warnings": 0, "notes": 0}
+                t = iss.get("type", "note")
+                if t == "error":
+                    batch_counts[sn]["errors"] += 1
+                elif t == "warning":
+                    batch_counts[sn]["warnings"] += 1
+                else:
+                    batch_counts[sn]["notes"] += 1
+            for s in batch_sheets:
+                sn = s.get("number", "")
+                s["issue_counts"] = batch_counts.get(sn, {"errors": 0, "warnings": 0, "notes": 0})
+
+            all_sheets.extend(batch_sheets)
+            all_issues.extend(batch_issues)
+
+            yield json.dumps({
+                "event": "batch",
+                "batch_num": batch_idx + 1,
+                "total_batches": total_batches,
+                "page_start": batch[0]["page_num"],
+                "page_end": batch[-1]["page_num"],
+                "total_pages": total_pages,
+                "filename": filename,
+                "sheets": batch_sheets,
+                "issues": batch_issues,
+            }) + "\n"
+
+            # Compact prior-context for the next batch — sheet inventory + condensed issue log.
+            # Lets each subsequent batch detect cross-sheet inconsistencies without re-reporting.
+            if all_sheets or all_issues:
+                sheet_summary = ", ".join(
+                    f"{s.get('number', '?')} — {s.get('title', '?')}"
+                    for s in all_sheets[:40]
+                )
+                issue_lines = "\n".join(
+                    f"  [{i.get('checklist_ref', '')}] {i.get('sheet_number', '')} — {i.get('description', '')}"
+                    for i in all_issues[-80:]
+                )
+                prior_context = (
+                    "\n\nCONTEXT FROM PRIOR BATCHES — use for cross-sheet awareness. "
+                    "Do not re-report these exact issues verbatim; only flag them again "
+                    "if the same problem recurs on a new sheet with distinct evidence:\n"
+                    f"Sheets already logged: {sheet_summary}\n"
+                    f"Issues already identified (most recent {min(80, len(all_issues))}):\n"
+                    f"{issue_lines}"
+                )
+
+        # Deduplicate sheets (first occurrence wins).
+        seen: dict = {}
+        for s in all_sheets:
+            sn = s.get("number", "")
+            if sn and sn not in seen:
+                seen[sn] = s
+        sheets: list = list(seen.values())
+
+        # Final grading call — text-only, no images.
+        grade: dict = {}
+        try:
+            grade_input = (
+                DRAWING_GRADE_PROMPT
+                + "SHEETS FOUND:\n"
+                + json.dumps(sheets, indent=2)[:20_000]
+                + "\n\nALL ISSUES FOUND:\n"
+                + json.dumps(all_issues, indent=2)[:60_000]
+            )
+            grade_msg = await asyncio.to_thread(
+                client.messages.create,
+                model="claude-sonnet-4-6",
+                max_tokens=4000,
+                messages=[{"role": "user", "content": grade_input}],
+            )
+            grade = json.loads(strip_fences(grade_msg.content[0].text)).get("grade", {})
+        except Exception:
+            pass
+
+        yield json.dumps({
+            "event": "done",
+            "filename": filename,
+            "total_pages": total_pages,
+            "grade": grade,
+        }) + "\n"
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
 
 
 # ── Chat endpoint ──────────────────────────────────────────────────────────
