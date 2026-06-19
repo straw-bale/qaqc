@@ -78,33 +78,34 @@ JPEG_QUALITY = 90
 PAGES_PER_BATCH = 15  # pages per Claude vision call at 2× scale
 
 
-def extract_drawing_pages(pdf_path: str) -> tuple[str, list[dict], int]:
-    """Returns (page-annotated full text, list of {page_num, b64, media_type}, total_pages).
-    Accepts a file path so neither pdfplumber nor fitz need to copy bytes into RAM."""
+def extract_pdf_text_and_count(pdf_path: str) -> tuple[str, int]:
+    """Extract text and page count only — no image rendering. Cheap and low-memory."""
     with pdfplumber.open(pdf_path) as pdf:
         total = len(pdf.pages)
         parts = []
         for i, p in enumerate(pdf.pages):
             txt = (p.extract_text() or "").strip()
             parts.append(f"[PAGE {i + 1}]\n{txt}" if txt else f"[PAGE {i + 1} — no extractable text]")
-    full_text = "\n\n".join(parts)
+    return "\n\n".join(parts), total
 
-    # fitz opens from disk — no in-memory PDF copy, minimal RAM overhead.
+
+def render_page_batch(pdf_path: str, page_indices: list[int], page_offset: int) -> list[dict]:
+    """Render a specific batch of pages (0-based indices) to base64 JPEG.
+    Only these pages are held in memory at once — never the full document."""
     doc = fitz.open(pdf_path)
-    page_images = []
+    images = []
     try:
-        for i in range(len(doc)):
+        for i in page_indices:
             pix = doc[i].get_pixmap(matrix=fitz.Matrix(RENDER_SCALE, RENDER_SCALE))
-            page_images.append({
-                "page_num": i + 1,
+            images.append({
+                "page_num": page_offset + i + 1,
                 "b64": base64.b64encode(pix.tobytes("jpeg", jpg_quality=JPEG_QUALITY)).decode(),
                 "media_type": "image/jpeg",
             })
-            del pix  # free each pixmap immediately after encoding
+            del pix
     finally:
         doc.close()
-
-    return full_text, page_images, total
+    return images
 
 
 # ── Section splitting (spec) ───────────────────────────────────────────────
@@ -593,188 +594,211 @@ def strip_fences(raw: str) -> str:
 # caught without requiring the user to classify files first.
 @app.post("/upload-documents")
 async def upload_documents(files: List[UploadFile] = File(...)):
-    # Stream each file to a temp path, extract pages, then clean up.
+    # Phase 1: write uploads to tmp files and extract text only (no images yet).
+    # Tmp files are kept on disk so we can render pages batch-by-batch during streaming,
+    # avoiding loading all page images into memory simultaneously.
     all_text_parts: list[str] = []
-    all_page_images: list[dict] = []
     filenames: list[str] = []
+    # (tmp_path, page_count, global_page_offset_at_start_of_this_file)
+    file_meta: list[tuple[str, int, int]] = []
+    tmp_paths: list[str] = []
     global_page_offset = 0
 
     for file in files:
         tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
+        tmp_paths.append(tmp_path)
         try:
             with os.fdopen(tmp_fd, "wb") as tmp:
                 while chunk := await file.read(1024 * 1024):
                     tmp.write(chunk)
             try:
-                file_text, page_images, _ = await asyncio.to_thread(
-                    extract_drawing_pages, tmp_path
+                file_text, page_count = await asyncio.to_thread(
+                    extract_pdf_text_and_count, tmp_path
                 )
             except Exception as exc:
                 raise HTTPException(400, f"PDF parse error ({file.filename}): {exc}")
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-
-        # Offset page numbers so they remain unique across all uploaded files.
-        for pg in page_images:
-            pg["page_num"] += global_page_offset
-        global_page_offset += len(page_images)
+        except HTTPException:
+            for p in tmp_paths:
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+            raise
 
         all_text_parts.append(f"=== FILE: {file.filename} ===\n{file_text}")
-        all_page_images.extend(page_images)
+        file_meta.append((tmp_path, page_count, global_page_offset))
         filenames.append(file.filename)
+        global_page_offset += page_count
 
     full_text = "\n\n".join(all_text_parts)
-    total_pages = len(all_page_images)
+    total_pages = global_page_offset
 
-    # Make extracted text available for chat immediately, before streaming starts.
     doc_store["documents"]["text"] = full_text
     doc_store["documents"]["filenames"] = filenames
     doc_store["documents"]["page_count"] = total_pages
 
-    batches = [
-        all_page_images[i : i + PAGES_PER_BATCH]
-        for i in range(0, len(all_page_images), PAGES_PER_BATCH)
-    ]
-    total_batches = len(batches)
+    # Build batch plan: each entry covers at most PAGES_PER_BATCH pages from one file.
+    batch_plan: list[tuple[str, list[int], int]] = []
+    for tmp_path, page_count, offset in file_meta:
+        for start in range(0, page_count, PAGES_PER_BATCH):
+            end = min(start + PAGES_PER_BATCH, page_count)
+            batch_plan.append((tmp_path, list(range(start, end)), offset))
+    total_batches = len(batch_plan)
 
     async def generate():
-        all_sheets: list = []
-        all_issues: list = []
-        issue_counter = 0
-        prior_context = ""
+        try:
+            all_sheets: list = []
+            all_issues: list = []
+            issue_counter = 0
+            prior_context = ""
 
-        for batch_idx, batch in enumerate(batches):
-            content: list = [
-                {"type": "text", "text": DRAWING_BATCH_PROMPT + full_text[:120_000]},
-            ]
-            for pg in batch:
-                content.append({"type": "text", "text": f"\n[Visual — page {pg['page_num']}:]"})
-                content.append({
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": pg["media_type"],
-                        "data": pg["b64"],
-                    },
-                })
+            for batch_idx, (pdf_path, page_indices, offset) in enumerate(batch_plan):
+                # Render only this batch — previous batch images are already GC'd.
+                batch = await asyncio.to_thread(
+                    render_page_batch, pdf_path, page_indices, offset
+                )
+                page_start = batch[0]["page_num"]
+                page_end = batch[-1]["page_num"]
 
-            tail = (
-                f"\n\nTotal pages across all uploaded files: {total_pages}. "
-                f"This batch covers pages {batch[0]['page_num']}–{batch[-1]['page_num']} "
-                f"(batch {batch_idx + 1} of {total_batches}). "
-                f"Files uploaded: {', '.join(filenames)}."
-            )
-            if prior_context:
-                tail += prior_context
-            content.append({"type": "text", "text": tail})
+                content: list = [
+                    {"type": "text", "text": DRAWING_BATCH_PROMPT + full_text[:120_000]},
+                ]
+                for pg in batch:
+                    content.append({"type": "text", "text": f"\n[Visual — page {pg['page_num']}:]"})
+                    content.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": pg["media_type"],
+                            "data": pg["b64"],
+                        },
+                    })
 
+                tail = (
+                    f"\n\nTotal pages across all uploaded files: {total_pages}. "
+                    f"This batch covers pages {batch[0]['page_num']}–{batch[-1]['page_num']} "
+                    f"(batch {batch_idx + 1} of {total_batches}). "
+                    f"Files uploaded: {', '.join(filenames)}."
+                )
+                if prior_context:
+                    tail += prior_context
+                content.append({"type": "text", "text": tail})
+
+                try:
+                    msg = await asyncio.to_thread(
+                        client.messages.create,
+                        model="claude-sonnet-4-6",
+                        max_tokens=24000,
+                        thinking={"type": "adaptive"},
+                        messages=[{"role": "user", "content": content}],
+                    )
+                    raw_text = next(b.text for b in msg.content if b.type == "text")
+                    batch_result = json.loads(strip_fences(raw_text))
+                except Exception as exc:
+                    yield json.dumps({"event": "error", "message": str(exc)}) + "\n"
+                    return
+
+                # Explicitly drop batch images from memory before next render.
+                del batch
+                del content
+
+                batch_sheets = batch_result.get("sheets", [])
+                batch_issues = batch_result.get("issues", [])
+
+                for iss in batch_issues:
+                    issue_counter += 1
+                    iss["id"] = f"issue-{issue_counter}"
+
+                batch_counts: dict[str, dict] = {}
+                for iss in batch_issues:
+                    sn = iss.get("sheet_number", "")
+                    if sn not in batch_counts:
+                        batch_counts[sn] = {"errors": 0, "warnings": 0, "notes": 0}
+                    t = iss.get("type", "note")
+                    if t == "error":
+                        batch_counts[sn]["errors"] += 1
+                    elif t == "warning":
+                        batch_counts[sn]["warnings"] += 1
+                    else:
+                        batch_counts[sn]["notes"] += 1
+                for s in batch_sheets:
+                    sn = s.get("number", "")
+                    s["issue_counts"] = batch_counts.get(sn, {"errors": 0, "warnings": 0, "notes": 0})
+
+                all_sheets.extend(batch_sheets)
+                all_issues.extend(batch_issues)
+
+                yield json.dumps({
+                    "event": "batch",
+                    "batch_num": batch_idx + 1,
+                    "total_batches": total_batches,
+                    "page_start": page_start,
+                    "page_end": page_end,
+                    "total_pages": total_pages,
+                    "filenames": filenames,
+                    "sheets": batch_sheets,
+                    "issues": batch_issues,
+                }) + "\n"
+
+                if all_sheets or all_issues:
+                    sheet_summary = ", ".join(
+                        f"{s.get('number', '?')} — {s.get('title', '?')}"
+                        for s in all_sheets[:40]
+                    )
+                    issue_lines = "\n".join(
+                        f"  [{i.get('checklist_ref', '')}] {i.get('sheet_number', '')} — {i.get('description', '')}"
+                        for i in all_issues[-80:]
+                    )
+                    prior_context = (
+                        "\n\nCONTEXT FROM PRIOR BATCHES — use for cross-document awareness. "
+                        "Do not re-report these exact issues verbatim; only flag them again "
+                        "if the same problem recurs on a new page with distinct evidence:\n"
+                        f"Sheets/sections already logged: {sheet_summary}\n"
+                        f"Issues already identified (most recent {min(80, len(all_issues))}):\n"
+                        f"{issue_lines}"
+                    )
+
+            # Deduplicate sheets (first occurrence wins).
+            seen: dict = {}
+            for s in all_sheets:
+                sn = s.get("number", "")
+                if sn and sn not in seen:
+                    seen[sn] = s
+            sheets: list = list(seen.values())
+
+            # Final grading call — text-only, no images.
+            grade: dict = {}
             try:
-                msg = await asyncio.to_thread(
+                grade_input = (
+                    DRAWING_GRADE_PROMPT
+                    + "SHEETS/SECTIONS FOUND:\n"
+                    + json.dumps(sheets, indent=2)[:20_000]
+                    + "\n\nALL ISSUES FOUND:\n"
+                    + json.dumps(all_issues, indent=2)[:60_000]
+                )
+                grade_msg = await asyncio.to_thread(
                     client.messages.create,
                     model="claude-sonnet-4-6",
-                    max_tokens=24000,
-                    thinking={"type": "adaptive"},
-                    messages=[{"role": "user", "content": content}],
+                    max_tokens=4000,
+                    messages=[{"role": "user", "content": grade_input}],
                 )
-                raw_text = next(b.text for b in msg.content if b.type == "text")
-                batch_result = json.loads(strip_fences(raw_text))
-            except Exception as exc:
-                yield json.dumps({"event": "error", "message": str(exc)}) + "\n"
-                return
-
-            batch_sheets = batch_result.get("sheets", [])
-            batch_issues = batch_result.get("issues", [])
-
-            for iss in batch_issues:
-                issue_counter += 1
-                iss["id"] = f"issue-{issue_counter}"
-
-            batch_counts: dict[str, dict] = {}
-            for iss in batch_issues:
-                sn = iss.get("sheet_number", "")
-                if sn not in batch_counts:
-                    batch_counts[sn] = {"errors": 0, "warnings": 0, "notes": 0}
-                t = iss.get("type", "note")
-                if t == "error":
-                    batch_counts[sn]["errors"] += 1
-                elif t == "warning":
-                    batch_counts[sn]["warnings"] += 1
-                else:
-                    batch_counts[sn]["notes"] += 1
-            for s in batch_sheets:
-                sn = s.get("number", "")
-                s["issue_counts"] = batch_counts.get(sn, {"errors": 0, "warnings": 0, "notes": 0})
-
-            all_sheets.extend(batch_sheets)
-            all_issues.extend(batch_issues)
+                grade = json.loads(strip_fences(grade_msg.content[0].text)).get("grade", {})
+            except Exception:
+                pass
 
             yield json.dumps({
-                "event": "batch",
-                "batch_num": batch_idx + 1,
-                "total_batches": total_batches,
-                "page_start": batch[0]["page_num"],
-                "page_end": batch[-1]["page_num"],
-                "total_pages": total_pages,
+                "event": "done",
                 "filenames": filenames,
-                "sheets": batch_sheets,
-                "issues": batch_issues,
+                "total_pages": total_pages,
+                "grade": grade,
             }) + "\n"
 
-            if all_sheets or all_issues:
-                sheet_summary = ", ".join(
-                    f"{s.get('number', '?')} — {s.get('title', '?')}"
-                    for s in all_sheets[:40]
-                )
-                issue_lines = "\n".join(
-                    f"  [{i.get('checklist_ref', '')}] {i.get('sheet_number', '')} — {i.get('description', '')}"
-                    for i in all_issues[-80:]
-                )
-                prior_context = (
-                    "\n\nCONTEXT FROM PRIOR BATCHES — use for cross-document awareness. "
-                    "Do not re-report these exact issues verbatim; only flag them again "
-                    "if the same problem recurs on a new page with distinct evidence:\n"
-                    f"Sheets/sections already logged: {sheet_summary}\n"
-                    f"Issues already identified (most recent {min(80, len(all_issues))}):\n"
-                    f"{issue_lines}"
-                )
-
-        # Deduplicate sheets (first occurrence wins).
-        seen: dict = {}
-        for s in all_sheets:
-            sn = s.get("number", "")
-            if sn and sn not in seen:
-                seen[sn] = s
-        sheets: list = list(seen.values())
-
-        # Final grading call — text-only, no images.
-        grade: dict = {}
-        try:
-            grade_input = (
-                DRAWING_GRADE_PROMPT
-                + "SHEETS/SECTIONS FOUND:\n"
-                + json.dumps(sheets, indent=2)[:20_000]
-                + "\n\nALL ISSUES FOUND:\n"
-                + json.dumps(all_issues, indent=2)[:60_000]
-            )
-            grade_msg = await asyncio.to_thread(
-                client.messages.create,
-                model="claude-sonnet-4-6",
-                max_tokens=4000,
-                messages=[{"role": "user", "content": grade_input}],
-            )
-            grade = json.loads(strip_fences(grade_msg.content[0].text)).get("grade", {})
-        except Exception:
-            pass
-
-        yield json.dumps({
-            "event": "done",
-            "filenames": filenames,
-            "total_pages": total_pages,
-            "grade": grade,
-        }) + "\n"
+        finally:
+            for p in tmp_paths:
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
 
     return StreamingResponse(generate(), media_type="application/x-ndjson")
 
