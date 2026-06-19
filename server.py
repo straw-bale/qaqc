@@ -5,6 +5,7 @@ import json
 import os
 import re
 import tempfile
+from typing import List
 
 import anthropic
 import fitz  # PyMuPDF
@@ -48,8 +49,7 @@ DIVISION_NAMES = {
 
 # ── In-memory session store ────────────────────────────────────────────────
 doc_store: dict = {
-    "spec": {"text": None, "filename": None},
-    "drawings": {"text": None, "filename": None, "page_count": 0},
+    "documents": {"text": None, "filenames": [], "page_count": 0},
 }
 
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
@@ -216,13 +216,18 @@ Letter grades: A=90-100, B=80-89, C=70-79, D=60-69, F<60. Use + and - for border
 SPECIFICATION TEXT:
 """
 
-# ── Drawing batch analysis prompt ──────────────────────────────────────────
-# Used for each batch of pages. Returns sheets + issues only (no grade).
+# ── Document batch analysis prompt ─────────────────────────────────────────
+# Used for each batch of pages from any uploaded construction document.
+# Files may be drawing sets, specification books, or combined documents.
 DRAWING_BATCH_PROMPT = """\
-You are a QA/QC reviewer for R3A Architecture. Analyze the provided batch of drawing pages \
-against the firm's official per-sheet deliverable checklist below. You have:
-  1. Extracted text from ALL pages in the document (title blocks, general notes, schedules, tags)
-  2. High-resolution visual images of THIS BATCH of sheets for direct inspection
+You are a QA/QC reviewer for R3A Architecture. Analyze the provided batch of construction \
+document pages against the firm's official per-sheet deliverable checklist below. You have:
+  1. Extracted text from ALL pages across all uploaded files (title blocks, notes, schedules, tags, spec sections)
+  2. High-resolution visual images of THIS BATCH of pages for direct inspection
+
+Pages may contain drawing sheets, specification sections, general notes, or a mix. \
+Treat specification section pages as sheets with discipline "Specification" and use the \
+CSI section number (e.g. "03 30 00") as the sheet number and the section title as the title.
 
 This project is in Pennsylvania. Apply the Pennsylvania Uniform Construction Code (UCC), \
 which adopts these current editions:
@@ -269,8 +274,8 @@ Issue types:
 
 checklist_ref: reference the checklist section and item number (e.g. "G.1-G.5", "G.2-001", "1.2-009").
 
-For "sheets": list ONLY the sheets whose visual images appear in this batch.
-Discipline values: Architectural, Structural, Civil, Mechanical, Electrical, Plumbing, Landscape, General, Other.
+For "sheets": list ONLY the sheets/pages whose visual images appear in this batch.
+Discipline values: Architectural, Structural, Civil, Mechanical, Electrical, Plumbing, Landscape, General, Specification, Other.
 
 ═══════════════════════════════════════════
 R3A FIRM STANDARDS — PER-SHEET QA CHECKLIST
@@ -582,111 +587,56 @@ def strip_fences(raw: str) -> str:
     return raw.strip()
 
 
-# ── Spec upload endpoint ───────────────────────────────────────────────────
-@app.post("/upload")
-async def upload(file: UploadFile = File(...)):
-    data = await file.read()
+# ── Unified document upload endpoint ──────────────────────────────────────
+# Accepts one or more PDFs (drawings, specs, or mixed). All files are rendered
+# page-by-page and analyzed together so specs embedded in a drawing set are
+# caught without requiring the user to classify files first.
+@app.post("/upload-documents")
+async def upload_documents(files: List[UploadFile] = File(...)):
+    # Stream each file to a temp path, extract pages, then clean up.
+    all_text_parts: list[str] = []
+    all_page_images: list[dict] = []
+    filenames: list[str] = []
+    global_page_offset = 0
 
-    try:
-        text = extract_pdf_text(data)
-    except Exception as exc:
-        raise HTTPException(400, f"PDF parse error: {exc}")
-
-    if not text.strip():
-        raise HTTPException(
-            400,
-            "No extractable text found. Make sure this is a text-based PDF "
-            "(not a scanned image). Try a DOCX export if available.",
-        )
-
-    doc_store["spec"]["text"] = text
-    doc_store["spec"]["filename"] = file.filename
-
-    sections = split_sections(text)
-
-    analysis_input = SPEC_ANALYSIS_PROMPT + text[:175_000]
-    try:
-        msg = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=16000,
-            messages=[{"role": "user", "content": analysis_input}],
-        )
-        raw_json = strip_fences(msg.content[0].text)
-        result = json.loads(raw_json)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(500, f"Claude returned malformed JSON: {exc}")
-    except anthropic.APIError as exc:
-        raise HTTPException(502, f"Claude API error: {exc}")
-
-    issues: list = result.get("issues", [])
-
-    counts: dict[str, dict] = {}
-    for iss in issues:
-        sn = iss.get("section_number", "")
-        if sn not in counts:
-            counts[sn] = {"errors": 0, "warnings": 0, "notes": 0}
-        t = iss.get("type", "note")
-        if t == "error":
-            counts[sn]["errors"] += 1
-        elif t == "warning":
-            counts[sn]["warnings"] += 1
-        else:
-            counts[sn]["notes"] += 1
-
-    section_list = []
-    for s in sections:
-        num = s["number"]
-        div = num.split()[0] if " " in num else num[:2]
-        section_list.append({
-            "number": num,
-            "title": s["title"],
-            "division": div,
-            "division_name": DIVISION_NAMES.get(div, f"Division {div}"),
-            "text": s["text"],
-            "clauses": parse_clauses(s["text"]),
-            "issue_counts": counts.get(num, {"errors": 0, "warnings": 0, "notes": 0}),
-        })
-
-    return {
-        "filename": file.filename,
-        "sections": section_list,
-        "issues": issues,
-        "grade": result.get("grade", {}),
-    }
-
-
-# ── Drawing upload endpoint ────────────────────────────────────────────────
-@app.post("/upload-drawings")
-async def upload_drawings(file: UploadFile = File(...)):
-    # Stream upload to a temp file — keeps PDF bytes off the heap while fitz renders.
-    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
-    try:
-        with os.fdopen(tmp_fd, "wb") as tmp:
-            while chunk := await file.read(1024 * 1024):  # 1 MB chunks
-                tmp.write(chunk)
-
+    for file in files:
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
         try:
-            full_text, page_images, total_pages = await asyncio.to_thread(
-                extract_drawing_pages, tmp_path
-            )
-        except Exception as exc:
-            raise HTTPException(400, f"PDF parse error: {exc}")
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+            with os.fdopen(tmp_fd, "wb") as tmp:
+                while chunk := await file.read(1024 * 1024):
+                    tmp.write(chunk)
+            try:
+                file_text, page_images, _ = await asyncio.to_thread(
+                    extract_drawing_pages, tmp_path
+                )
+            except Exception as exc:
+                raise HTTPException(400, f"PDF parse error ({file.filename}): {exc}")
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
-    filename = file.filename
+        # Offset page numbers so they remain unique across all uploaded files.
+        for pg in page_images:
+            pg["page_num"] += global_page_offset
+        global_page_offset += len(page_images)
+
+        all_text_parts.append(f"=== FILE: {file.filename} ===\n{file_text}")
+        all_page_images.extend(page_images)
+        filenames.append(file.filename)
+
+    full_text = "\n\n".join(all_text_parts)
+    total_pages = len(all_page_images)
 
     # Make extracted text available for chat immediately, before streaming starts.
-    doc_store["drawings"]["text"] = full_text
-    doc_store["drawings"]["filename"] = filename
-    doc_store["drawings"]["page_count"] = total_pages
+    doc_store["documents"]["text"] = full_text
+    doc_store["documents"]["filenames"] = filenames
+    doc_store["documents"]["page_count"] = total_pages
 
     batches = [
-        page_images[i : i + PAGES_PER_BATCH]
-        for i in range(0, len(page_images), PAGES_PER_BATCH)
+        all_page_images[i : i + PAGES_PER_BATCH]
+        for i in range(0, len(all_page_images), PAGES_PER_BATCH)
     ]
     total_batches = len(batches)
 
@@ -694,7 +644,7 @@ async def upload_drawings(file: UploadFile = File(...)):
         all_sheets: list = []
         all_issues: list = []
         issue_counter = 0
-        prior_context = ""  # Rolling summary of findings; injected into each subsequent batch
+        prior_context = ""
 
         for batch_idx, batch in enumerate(batches):
             content: list = [
@@ -711,11 +661,11 @@ async def upload_drawings(file: UploadFile = File(...)):
                     },
                 })
 
-            # Tail: batch coordinates + rolling prior-batch context.
             tail = (
-                f"\n\nTotal pages in document: {total_pages}. "
+                f"\n\nTotal pages across all uploaded files: {total_pages}. "
                 f"This batch covers pages {batch[0]['page_num']}–{batch[-1]['page_num']} "
-                f"(batch {batch_idx + 1} of {total_batches})."
+                f"(batch {batch_idx + 1} of {total_batches}). "
+                f"Files uploaded: {', '.join(filenames)}."
             )
             if prior_context:
                 tail += prior_context
@@ -729,7 +679,6 @@ async def upload_drawings(file: UploadFile = File(...)):
                     thinking={"type": "adaptive"},
                     messages=[{"role": "user", "content": content}],
                 )
-                # Response may contain a thinking block; extract only the text block.
                 raw_text = next(b.text for b in msg.content if b.type == "text")
                 batch_result = json.loads(strip_fences(raw_text))
             except Exception as exc:
@@ -739,12 +688,10 @@ async def upload_drawings(file: UploadFile = File(...)):
             batch_sheets = batch_result.get("sheets", [])
             batch_issues = batch_result.get("issues", [])
 
-            # Assign stable IDs across batches before the client sees them.
             for iss in batch_issues:
                 issue_counter += 1
-                iss["id"] = f"draw-issue-{issue_counter}"
+                iss["id"] = f"issue-{issue_counter}"
 
-            # Tally issue counts per sheet for this batch.
             batch_counts: dict[str, dict] = {}
             for iss in batch_issues:
                 sn = iss.get("sheet_number", "")
@@ -771,13 +718,11 @@ async def upload_drawings(file: UploadFile = File(...)):
                 "page_start": batch[0]["page_num"],
                 "page_end": batch[-1]["page_num"],
                 "total_pages": total_pages,
-                "filename": filename,
+                "filenames": filenames,
                 "sheets": batch_sheets,
                 "issues": batch_issues,
             }) + "\n"
 
-            # Compact prior-context for the next batch — sheet inventory + condensed issue log.
-            # Lets each subsequent batch detect cross-sheet inconsistencies without re-reporting.
             if all_sheets or all_issues:
                 sheet_summary = ", ".join(
                     f"{s.get('number', '?')} — {s.get('title', '?')}"
@@ -788,10 +733,10 @@ async def upload_drawings(file: UploadFile = File(...)):
                     for i in all_issues[-80:]
                 )
                 prior_context = (
-                    "\n\nCONTEXT FROM PRIOR BATCHES — use for cross-sheet awareness. "
+                    "\n\nCONTEXT FROM PRIOR BATCHES — use for cross-document awareness. "
                     "Do not re-report these exact issues verbatim; only flag them again "
-                    "if the same problem recurs on a new sheet with distinct evidence:\n"
-                    f"Sheets already logged: {sheet_summary}\n"
+                    "if the same problem recurs on a new page with distinct evidence:\n"
+                    f"Sheets/sections already logged: {sheet_summary}\n"
                     f"Issues already identified (most recent {min(80, len(all_issues))}):\n"
                     f"{issue_lines}"
                 )
@@ -809,7 +754,7 @@ async def upload_drawings(file: UploadFile = File(...)):
         try:
             grade_input = (
                 DRAWING_GRADE_PROMPT
-                + "SHEETS FOUND:\n"
+                + "SHEETS/SECTIONS FOUND:\n"
                 + json.dumps(sheets, indent=2)[:20_000]
                 + "\n\nALL ISSUES FOUND:\n"
                 + json.dumps(all_issues, indent=2)[:60_000]
@@ -826,7 +771,7 @@ async def upload_drawings(file: UploadFile = File(...)):
 
         yield json.dumps({
             "event": "done",
-            "filename": filename,
+            "filenames": filenames,
             "total_pages": total_pages,
             "grade": grade,
         }) + "\n"
@@ -842,21 +787,17 @@ class ChatBody(BaseModel):
 
 @app.post("/chat")
 async def chat(body: ChatBody):
-    spec = doc_store["spec"]
-    drawings = doc_store["drawings"]
+    docs = doc_store["documents"]
 
-    if not spec["text"] and not drawings["text"]:
-        raise HTTPException(400, "No documents loaded. Upload a spec or drawing set first.")
+    if not docs["text"]:
+        raise HTTPException(400, "No documents loaded. Upload files first.")
 
     system = (
         "You are an expert construction document reviewer. "
         "Answer questions concisely and technically. "
         "Cite spec clause IDs (e.g. §1.02.B) and section numbers, or drawing sheet numbers, when relevant."
+        f"\n\nCONSTRUCTION DOCUMENTS (extracted text):\n{docs['text'][:175_000]}"
     )
-    if spec["text"]:
-        system += f"\n\nSPECIFICATION DOCUMENT:\n{spec['text'][:100_000]}"
-    if drawings["text"]:
-        system += f"\n\nDRAWING SET (extracted text):\n{drawings['text'][:75_000]}"
 
     messages = body.history[-20:] + [{"role": "user", "content": body.message}]
 

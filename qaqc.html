@@ -51,34 +51,6 @@
         color: #aaaaaa;
       }
 
-      /* ── Doc mode toggle ── */
-      .doc-mode-toggle {
-        display: flex;
-        gap: 2px;
-        background: #f0f0f0;
-        border: 1px solid #e0e0e0;
-        border-radius: 6px;
-        padding: 2px;
-      }
-
-      .mode-btn {
-        font-size: 0.72rem;
-        font-weight: 500;
-        padding: 4px 12px;
-        border-radius: 4px;
-        border: none;
-        cursor: pointer;
-        background: transparent;
-        color: #aaaaaa;
-        transition: background 0.15s, color 0.15s;
-      }
-      .mode-btn:hover:not(:disabled) { color: #555; }
-      .mode-btn.active {
-        background: #ffffff;
-        color: #1a1a1a;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-      }
-      .mode-btn:disabled { opacity: 0.35; cursor: default; }
 
       .topbar-actions {
         margin-left: auto;
@@ -238,20 +210,6 @@
         flex-shrink: 0;
       }
 
-      .queued-type-toggle {
-        font-size: 0.62rem;
-        font-weight: 700;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        padding: 3px 10px;
-        border-radius: 4px;
-        cursor: pointer;
-        white-space: nowrap;
-        flex-shrink: 0;
-        transition: all 0.15s;
-      }
-      .queued-type-toggle.type-spec     { background: #edf4ff; color: #2060c0; border: 1px solid #a8c4f0; }
-      .queued-type-toggle.type-drawings { background: #fdf4e4; color: #a06000; border: 1px solid #e8c880; }
 
       .queued-remove {
         font-size: 0.8rem;
@@ -2055,8 +2013,8 @@
         </div>
         <div class="doc-scroll" id="doc-scroll">
           <div class="empty-state">
-            <div class="empty-icon">📄</div>
-            Select a section from the Sections tab
+            <div class="empty-icon">📐</div>
+            Select a sheet from the Sheets tab
           </div>
         </div>
         <iframe class="pdf-frame" id="pdf-frame" title="Source document"></iframe>
@@ -2077,7 +2035,7 @@
           <div class="issues-list" id="issues-list">
             <div class="empty-state">
               <div class="empty-icon">✓</div>
-              Select a section to view its issues
+              Select a sheet to view its issues
             </div>
           </div>
         </div>
@@ -2110,16 +2068,6 @@
           </div>
         </div>
 
-        <!-- Sections tab (spec mode) -->
-        <div class="tab-content" id="tab-sections">
-          <div class="issues-list" id="sections-list">
-            <div class="empty-state">
-              <div class="empty-icon">📋</div>
-              No specification loaded
-            </div>
-          </div>
-        </div>
-
         <!-- Grade tab -->
         <div class="tab-content active" id="tab-grade">
           <div class="grade-scroll" id="grade-content">
@@ -2136,32 +2084,18 @@
       const API = '';
       const PAGES_PER_BATCH = 15; // must match server.py PAGES_PER_BATCH
 
-      // ── Pending upload state ─────────────────────────────────────────────
-      const pending = { spec: null, drawings: null };
-
       // ── Analysis state ───────────────────────────────────────────────────
       const state = {
-        // Spec
-        filename: null,
-        sections: [],
+        filenames: [],       // all uploaded filenames
+        totalPages: 0,
+        sheets: [],
         issues: [],
         grade: {},
-        currentSection: null,
+        currentSheet: null,
         dismissed: new Set(),
 
-        // Drawings
-        drawingFilename: null,
-        drawingTotalPages: 0,
-        drawingSheets: [],
-        drawingIssues: [],
-        drawingGrade: {},
-        currentSheet: null,
-        drawingDismissed: new Set(),
-
-        // Shared
         docView: 'analysis',   // 'analysis' | 'source'
-        specObjectUrl: null,
-        drawingsObjectUrl: null,
+        documentUrls: [],      // object URLs for uploaded files (one per file)
         chatHistory: [],
       };
 
@@ -2178,10 +2112,6 @@
       function escAttr(s) {
         if (s == null) return '';
         return String(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-      }
-
-      function clauseElId(clauseId) {
-        return 'clause-' + String(clauseId).replace(/\./g, '_');
       }
 
       // ── Checklist reference panel ────────────────────────────────────────
@@ -2376,19 +2306,7 @@
 
 
       // ── Upload flow ──────────────────────────────────────────────────────
-      const queued = []; // [{file, type: 'spec'|'drawings'}]
-
-      function autoDetectType(filename) {
-        const s = filename.toLowerCase();
-        // Sheet number prefix pattern: A-001, E-205, ED501, S-101, M-301, etc.
-        if (/^[a-z]{1,3}[-_]?\d{2,}/.test(s)) return 'drawings';
-        // Explicit spec keywords
-        if (/spec|manual|project.manual|masterspec|division|csi|pm[_\-\s]/.test(s)) return 'spec';
-        // Drawing keywords
-        if (/draw|sheet|plan|floor|elevation|section|detail|structural|mechanical|electrical|plumbing|civil|landscape|cd[_\-\s]|dd[_\-\s]|sd[_\-\s]|dwg|revit|construction.doc|const.doc/.test(s)) return 'drawings';
-        // Fallback: first entry becomes spec, any subsequent becomes drawings
-        return queued.some(q => q.type === 'spec') ? 'drawings' : 'spec';
-      }
+      const queued = []; // [{file}]
 
       function renderQueuedFiles() {
         const el = document.getElementById('queued-files');
@@ -2396,9 +2314,6 @@
         el.style.display = 'flex';
         el.innerHTML = queued.map((q, i) => {
           const mb = (q.file.size / 1024 / 1024).toFixed(1);
-          const isSpec = q.type === 'spec';
-          const chipClass = isSpec ? 'type-spec' : 'type-drawings';
-          const chipLabel = isSpec ? 'Specification' : 'Drawing Set';
           return `<div class="queued-file-row">
             <span class="queued-file-icon">📄</span>
             <span class="queued-file-name" title="${esc(q.file.name)}">${esc(q.file.name)}</span>
@@ -2406,12 +2321,6 @@
             <button class="queued-remove" onclick="removeQueuedFile(${i})">✕</button>
           </div>`;
         }).join('');
-      }
-
-      function toggleFileType(idx) {
-        queued[idx].type = queued[idx].type === 'spec' ? 'drawings' : 'spec';
-        renderQueuedFiles();
-        updateCostEstimate();
       }
 
       function removeQueuedFile(idx) {
@@ -2442,10 +2351,10 @@
       function addFiles(fileList) {
         for (const file of fileList) {
           if (!file.name.match(/\.pdf$/i)) { alert(`${file.name} is not a PDF.`); continue; }
-          if (queued.length >= 2) { alert('Maximum two files at a time — remove one first.'); break; }
+          if (queued.length >= 4) { alert('Maximum four files at a time — remove one first.'); break; }
           // Prevent duplicate
           if (queued.some(q => q.file.name === file.name && q.file.size === file.size)) continue;
-          queued.push({ file, type: autoDetectType(file.name) });
+          queued.push({ file });
         }
         renderQueuedFiles();
         document.getElementById('analyze-btn').disabled = queued.length === 0;
@@ -2456,8 +2365,7 @@
         let cents = 0;
         for (const q of queued) {
           const mb = q.file.size / 1024 / 1024;
-          if (q.type === 'spec')      cents += Math.max(8, Math.round(mb * 10));
-          else                        cents += Math.round(15 + mb * 5);
+          cents += Math.round(15 + mb * 5);
         }
         return cents;
       }
@@ -2510,9 +2418,6 @@
       async function runPendingAnalysis() {
         if (!queued.length) return;
 
-        const pendingSpec     = queued.find(q => q.type === 'spec')?.file || null;
-        const pendingDrawings = queued.find(q => q.type === 'drawings')?.file || null;
-
         // Hide upload area, show progress
         document.getElementById('upload-zone').style.display = 'none';
         document.getElementById('queued-files').style.display = 'none';
@@ -2524,184 +2429,124 @@
         const status = document.getElementById('upload-status');
         const filenameEl = document.getElementById('upload-filename');
 
-        const hasSpec     = !!pendingSpec;
-        const hasDrawings = !!pendingDrawings;
-        const specShare   = hasSpec && hasDrawings ? 50 : 100;
+        filenameEl.textContent = queued.map(q => q.file.name).join(', ');
+        bar.style.width = '5%';
+        status.textContent = 'Uploading and rendering pages…';
+
         let workspaceRevealed = false;
 
         try {
-          // ── Spec ──────────────────────────────────────────────────────
-          if (hasSpec) {
-            filenameEl.textContent = pendingSpec.name;
-            bar.style.width = '8%';
-            status.textContent = 'Uploading specification…';
+          const fd = new FormData();
+          for (const q of queued) fd.append('files', q.file);
 
-            const fd = new FormData();
-            fd.append('file', pendingSpec);
+          bar.style.width = '10%';
+          status.textContent = 'Rendering pages at full resolution…';
 
-            bar.style.width = (specShare * 0.25) + '%';
-            status.textContent = 'Extracting text from specification…';
-
-            const resp = await fetch(`${API}/upload`, { method: 'POST', body: fd });
-            if (!resp.ok) {
-              const e = await resp.json().catch(() => ({ detail: resp.statusText }));
-              throw new Error(e.detail || 'Spec upload failed');
-            }
-            const data = await resp.json();
-
-            bar.style.width = specShare + '%';
-            status.textContent = hasDrawings
-              ? 'Specification analyzed. Processing drawing set…'
-              : 'Specification analysis complete.';
-
-            state.filename = data.filename;
-            state.sections = data.sections;
-            state.issues = data.issues;
-            state.grade = data.grade;
-            state.currentSection = data.sections[0]?.number || null;
-            state.dismissed = new Set();
+          const resp = await fetch(`${API}/upload-documents`, { method: 'POST', body: fd });
+          if (!resp.ok) {
+            const e = await resp.json().catch(() => ({ detail: resp.statusText }));
+            throw new Error(e.detail || 'Upload failed');
           }
 
-          // ── Drawings ───────────────────────────────────────────────────
-          if (hasDrawings) {
-            filenameEl.textContent = pendingDrawings.name;
-            const base = hasSpec ? 50 : 0;
-            bar.style.width = (base + 5) + '%';
-            status.textContent = 'Uploading drawing set…';
+          // Reset analysis state
+          state.sheets = [];
+          state.issues = [];
+          state.grade = {};
+          state.dismissed = new Set();
+          state.filenames = [];
+          state.totalPages = 0;
 
-            const fd = new FormData();
-            fd.append('file', pendingDrawings);
+          const reader = resp.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = '';
 
-            bar.style.width = (base + 10) + '%';
-            status.textContent = 'Rendering pages at full resolution…';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split('\n');
+            buf = lines.pop();
 
-            const resp = await fetch(`${API}/upload-drawings`, { method: 'POST', body: fd });
-            if (!resp.ok) {
-              const e = await resp.json().catch(() => ({ detail: resp.statusText }));
-              throw new Error(e.detail || 'Drawing upload failed');
-            }
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              let evt;
+              try { evt = JSON.parse(line); } catch { continue; }
 
-            // Read NDJSON stream — each line is a JSON event from the server.
-            state.drawingSheets = [];
-            state.drawingIssues = [];
-            state.drawingGrade = {};
-            state.drawingDismissed = new Set();
+              if (evt.event === 'error') {
+                throw new Error(evt.message || 'Analysis failed');
+              }
 
-            const reader = resp.body.getReader();
-            const decoder = new TextDecoder();
-            let buf = '';
-
-            outer: while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              buf += decoder.decode(value, { stream: true });
-              const lines = buf.split('\n');
-              buf = lines.pop(); // keep any incomplete trailing line
-
-              for (const line of lines) {
-                if (!line.trim()) continue;
-                let evt;
-                try { evt = JSON.parse(line); } catch { continue; }
-
-                if (evt.event === 'error') {
-                  throw new Error(evt.message || 'Drawing analysis failed');
+              if (evt.event === 'batch') {
+                // Merge sheets (deduplicate by number)
+                for (const s of (evt.sheets || [])) {
+                  if (!state.sheets.some(x => x.number === s.number)) {
+                    state.sheets.push(s);
+                  }
+                }
+                state.issues.push(...(evt.issues || []));
+                if (!state.filenames.length) {
+                  state.filenames = evt.filenames || [];
+                  state.totalPages = evt.total_pages;
+                  state.currentSheet = state.sheets[0]?.number || null;
                 }
 
-                if (evt.event === 'batch') {
-                  // Merge sheets (deduplicate by number)
-                  for (const s of (evt.sheets || [])) {
-                    if (!state.drawingSheets.some(x => x.number === s.number)) {
-                      state.drawingSheets.push(s);
-                    }
-                  }
-                  state.drawingIssues.push(...(evt.issues || []));
-                  if (!state.drawingFilename) {
-                    state.drawingFilename = evt.filename;
-                    state.drawingTotalPages = evt.total_pages;
-                    state.currentSheet = state.drawingSheets[0]?.number || null;
-                  }
+                const pct = 10 + Math.round((evt.batch_num / evt.total_batches) * 75);
+                bar.style.width = pct + '%';
+                status.textContent = `Batch ${evt.batch_num} of ${evt.total_batches} complete — pages ${evt.page_start}–${evt.page_end} analyzed`;
 
-                  const pct = base + 10 + Math.round((evt.batch_num / evt.total_batches) * 75);
-                  bar.style.width = pct + '%';
-                  status.textContent = `Batch ${evt.batch_num} of ${evt.total_batches} complete — pages ${evt.page_start}–${evt.page_end} analyzed`;
-
-                  // Reveal workspace after the first batch so users can review immediately.
-                  if (!workspaceRevealed) {
-                    workspaceRevealed = true;
-                    if (pendingSpec && !state.specObjectUrl) {
-                      state.specObjectUrl = URL.createObjectURL(pendingSpec);
-                    }
-                    if (pendingDrawings && !state.drawingsObjectUrl) {
-                      state.drawingsObjectUrl = URL.createObjectURL(pendingDrawings);
-                    }
-                    document.getElementById('upload-overlay').classList.add('hidden');
-                    document.getElementById('workspace').style.display = 'flex';
-                    document.getElementById('view-toggle').style.display = 'flex';
-                    document.getElementById('session-note').style.display = 'flex';
-                    state.docView = 'analysis';
-                    setDocView('analysis');
-                    updateTopbarMeta();
-                    switchTabByName('sheets');
-                    renderCurrentDoc();
-                  }
-
-                  // Update live UI if more batches remain.
-                  if (evt.batch_num < evt.total_batches) {
-                    const nextEnd = Math.min(evt.page_end + PAGES_PER_BATCH, evt.total_pages);
-                    document.getElementById('analyze-bar').style.display = 'flex';
-                    document.getElementById('analyze-bar-text').textContent =
-                      `Analyzing pages ${evt.page_end + 1}–${nextEnd} of ${evt.total_pages} (batch ${evt.batch_num + 1} of ${evt.total_batches})…`;
-                  } else {
-                    document.getElementById('analyze-bar').style.display = 'flex';
-                    document.getElementById('analyze-bar-text').textContent = 'Grading…';
-                  }
-                  renderSheetsTab();
-                }
-
-                if (evt.event === 'done') {
-                  state.drawingFilename = evt.filename;
-                  state.drawingTotalPages = evt.total_pages;
-                  state.drawingGrade = evt.grade || {};
-                  bar.style.width = '100%';
-                  status.textContent = 'Analysis complete.';
-                  document.getElementById('analyze-bar').style.display = 'none';
-                  renderGradeTab();
-                  renderSheetsTab();
+                // Reveal workspace after first batch
+                if (!workspaceRevealed) {
+                  workspaceRevealed = true;
+                  state.documentUrls = queued.map(q => URL.createObjectURL(q.file));
+                  document.getElementById('upload-overlay').classList.add('hidden');
+                  document.getElementById('workspace').style.display = 'flex';
+                  document.getElementById('view-toggle').style.display = 'flex';
+                  document.getElementById('session-note').style.display = 'flex';
+                  state.docView = 'analysis';
+                  setDocView('analysis');
                   updateTopbarMeta();
+                  switchTabByName('sheets');
+                  renderDocPane();
+                }
+
+                if (evt.batch_num < evt.total_batches) {
+                  const nextEnd = Math.min(evt.page_end + PAGES_PER_BATCH, evt.total_pages);
+                  document.getElementById('analyze-bar').style.display = 'flex';
+                  document.getElementById('analyze-bar-text').textContent =
+                    `Analyzing pages ${evt.page_end + 1}–${nextEnd} of ${evt.total_pages} (batch ${evt.batch_num + 1} of ${evt.total_batches})…`;
+                } else {
+                  document.getElementById('analyze-bar').style.display = 'flex';
+                  document.getElementById('analyze-bar-text').textContent = 'Grading…';
+                }
+                renderSheetsTab();
+              }
+
+              if (evt.event === 'done') {
+                state.filenames = evt.filenames || state.filenames;
+                state.totalPages = evt.total_pages;
+                state.grade = evt.grade || {};
+                bar.style.width = '100%';
+                status.textContent = 'Analysis complete.';
+                document.getElementById('analyze-bar').style.display = 'none';
+                renderGradeTab();
+                renderSheetsTab();
+                updateTopbarMeta();
+                if (!workspaceRevealed) {
+                  workspaceRevealed = true;
+                  state.documentUrls = queued.map(q => URL.createObjectURL(q.file));
+                  document.getElementById('upload-overlay').classList.add('hidden');
+                  document.getElementById('workspace').style.display = 'flex';
+                  document.getElementById('view-toggle').style.display = 'flex';
+                  document.getElementById('session-note').style.display = 'flex';
+                  state.docView = 'analysis';
+                  setDocView('analysis');
+                  updateTopbarMeta();
+                  switchTabByName('grade');
+                  state.chatHistory = [];
+                  initChat();
                 }
               }
             }
-          }
-
-          if (!hasDrawings) {
-            bar.style.width = '100%';
-            status.textContent = 'Analysis complete.';
-          }
-
-          // For spec-only uploads: reveal workspace now (drawings already revealed inline above).
-          if (!workspaceRevealed) {
-            setTimeout(() => {
-              if (pendingSpec) {
-                if (state.specObjectUrl) URL.revokeObjectURL(state.specObjectUrl);
-                state.specObjectUrl = URL.createObjectURL(pendingSpec);
-              }
-              if (pendingDrawings) {
-                if (state.drawingsObjectUrl) URL.revokeObjectURL(state.drawingsObjectUrl);
-                state.drawingsObjectUrl = URL.createObjectURL(pendingDrawings);
-              }
-              document.getElementById('upload-overlay').classList.add('hidden');
-              document.getElementById('workspace').style.display = 'flex';
-              document.getElementById('view-toggle').style.display = 'flex';
-              document.getElementById('session-note').style.display = 'flex';
-              state.docView = 'analysis';
-              setDocView('analysis');
-              updateTopbarMeta();
-              applyDocMode(null, true);
-              renderAll();
-              switchTabByName('grade');
-              state.chatHistory = [];
-              initChat();
-            }, 500);
           }
 
         } catch (err) {
@@ -2711,8 +2556,6 @@
           let msg = err.message;
           if (msg.includes('fetch') || msg.includes('NetworkError')) {
             msg = 'Cannot reach server. Is the backend running?';
-          } else if (msg === 'Spec upload failed' || msg === 'Drawing upload failed') {
-            msg = msg + ' — server may have timed out on a large file. Try again.';
           }
           status.textContent = msg;
           document.getElementById('upload-retry').style.display = 'block';
@@ -2731,8 +2574,7 @@
         const search = document.getElementById('doc-search');
 
         if (view === 'source') {
-          const url = (state.drawingFilename ? state.drawingsObjectUrl : state.specObjectUrl) || '';
-          frame.src = url;
+          frame.src = state.documentUrls[0] || '';
           frame.classList.add('visible');
           scroll.style.display = 'none';
           bar.style.display = 'none';
@@ -2740,140 +2582,26 @@
         } else {
           frame.classList.remove('visible');
           scroll.style.display = '';
-          search.style.display = state.drawingFilename ? 'none' : '';
+          search.style.display = 'none';
           renderAll();
         }
       }
 
-      // ── Post-analysis UI setup ───────────────────────────────────────────
-      function switchDocMode(mode) {
-        // No-op: mode toggle removed
-      }
-      function applyDocMode(mode, skipTabSwitch) {
-        // Sheets tab always visible; Sections tab hidden
-        const sheetsBtn = document.getElementById('tab-btn-sheets');
-        if (sheetsBtn) sheetsBtn.style.display = '';
-        // Doc search only for spec-only results
-        document.getElementById('doc-search').style.display = state.drawingFilename ? 'none' : '';
-        if (!skipTabSwitch) switchTabByName('grade');
-      }
-
       function updateTopbarMeta() {
-        const parts = [];
-        if (state.filename) parts.push(state.filename);
-        if (state.drawingFilename) parts.push(state.drawingFilename);
-        document.getElementById('topbar-meta').textContent = parts.join(' + ') || 'No documents loaded';
+        const label = state.filenames.length ? state.filenames.join(' + ') : 'No documents loaded';
+        document.getElementById('topbar-meta').textContent = label;
       }
 
       // ── Render all ───────────────────────────────────────────────────────
       function renderAll() {
-        if (state.drawingFilename) {
-          renderDrawingPane();
-          renderDrawingIssuesList();
-          renderSheetsTab();
-          renderDrawingGradeTab();
-        } else {
-          renderDocPane();
-          renderIssuesList();
-          renderSectionsTab();
-          renderGradeTab();
-        }
+        renderDocPane();
+        renderIssuesList();
+        renderSheetsTab();
+        renderGradeTab();
       }
 
-      // ── Spec document pane ───────────────────────────────────────────────
+      // ── Document pane ────────────────────────────────────────────────────
       function renderDocPane() {
-        const section = state.sections.find(s => s.number === state.currentSection);
-        const label = document.getElementById('doc-section-label');
-        const analyzeBar = document.getElementById('analyze-bar');
-        const docScroll = document.getElementById('doc-scroll');
-
-        if (!section) {
-          label.textContent = 'Select a section';
-          analyzeBar.style.display = 'none';
-          docScroll.innerHTML = '<div class="empty-state"><div class="empty-icon">📄</div>Select a section from the Sections tab</div>';
-          return;
-        }
-
-        label.textContent = `Section ${section.number} — ${section.title}`;
-
-        const c = section.issue_counts;
-        const total = c.errors + c.warnings + c.notes;
-        analyzeBar.style.display = 'flex';
-        if (total === 0) {
-          document.getElementById('analyze-bar-text').textContent = 'Analysis complete — no issues found in this section';
-        } else {
-          const parts = [];
-          if (c.errors) parts.push(`${c.errors} error${c.errors !== 1 ? 's' : ''}`);
-          if (c.warnings) parts.push(`${c.warnings} warning${c.warnings !== 1 ? 's' : ''}`);
-          if (c.notes) parts.push(`${c.notes} note${c.notes !== 1 ? 's' : ''}`);
-          document.getElementById('analyze-bar-text').textContent = `Analysis complete — ${parts.join(', ')} found in this section`;
-        }
-
-        const sectionIssues = state.issues.filter(
-          i => i.section_number === state.currentSection && !state.dismissed.has(i.id)
-        );
-
-        function issueForClause(clauseId) {
-          return sectionIssues.find(iss =>
-            iss.clause_id === clauseId || clauseId.startsWith(iss.clause_id + '.')
-          );
-        }
-
-        const partNames = { '1': 'General', '2': 'Products', '3': 'Execution' };
-        const groups = {};
-        for (const clause of section.clauses) {
-          const partKey = clause.id.split('.')[0];
-          if (!groups[partKey]) groups[partKey] = [];
-          groups[partKey].push(clause);
-        }
-
-        const orderedKeys = Object.keys(groups).sort((a, b) => Number(a) - Number(b));
-        let html = '';
-
-        if (orderedKeys.length === 0) {
-          html = `<div class="spec-section">
-            <div class="spec-section-number">Section ${esc(section.number)}</div>
-            <div class="spec-section-title">${esc(section.title)}</div>
-            <pre class="section-raw-text">${esc(section.text)}</pre>
-          </div>`;
-        } else {
-          for (const key of orderedKeys) {
-            const clauses = groups[key];
-            const partName = partNames[key] || `Part ${key}`;
-            html += `<div class="spec-section">
-              <div class="spec-section-number">Section ${key}</div>
-              <div class="spec-section-title">${esc(partName)}</div>`;
-            for (const clause of clauses) {
-              const issue = issueForClause(clause.id);
-              let hlClass = '';
-              let flagHtml = '';
-              let detailHtml = '';
-              if (issue) {
-                hlClass = issue.type === 'error' ? 'highlight-error'
-                        : issue.type === 'warning' ? 'highlight-warn'
-                        : 'highlight-info';
-                const fc = issue.type === 'error' ? 'flag-error'
-                         : issue.type === 'warning' ? 'flag-warn' : 'flag-info';
-                const fl = issue.type === 'error' ? 'Error'
-                         : issue.type === 'warning' ? 'Warning' : 'Note';
-                const dc = issue.type === 'error' ? '#8a3030'
-                         : issue.type === 'warning' ? '#7a5a20' : '#3a6090';
-                flagHtml = `<span class="inline-flag ${fc}">${fl}</span>`;
-                detailHtml = `<div style="margin-top:6px;font-size:0.75rem;color:${dc};">${esc(issue.detail)}</div>`;
-              }
-              html += `<div class="spec-clause ${hlClass}" id="${clauseElId(clause.id)}">
-                <span class="clause-id">${esc(clause.id)}</span>${esc(clause.text)}${flagHtml}${detailHtml}
-              </div>`;
-            }
-            html += `</div>`;
-          }
-        }
-
-        docScroll.innerHTML = html;
-      }
-
-      // ── Drawing doc pane ─────────────────────────────────────────────────
-      function renderDrawingPane() {
         const label = document.getElementById('doc-section-label');
         const analyzeBar = document.getElementById('analyze-bar');
         const docScroll = document.getElementById('doc-scroll');
@@ -2885,7 +2613,7 @@
           return;
         }
 
-        const sheet = state.drawingSheets.find(s => s.number === state.currentSheet);
+        const sheet = state.sheets.find(s => s.number === state.currentSheet);
         if (!sheet) return;
 
         label.textContent = `${sheet.number} — ${sheet.title}`;
@@ -2904,8 +2632,8 @@
         }
 
         const dc = disciplineColors(sheet.discipline);
-        const sheetIssues = state.drawingIssues.filter(
-          i => i.sheet_number === state.currentSheet && !state.drawingDismissed.has(i.id)
+        const sheetIssues = state.issues.filter(
+          i => i.sheet_number === state.currentSheet && !state.dismissed.has(i.id)
         );
 
         let issuesHtml = '';
@@ -2950,67 +2678,15 @@
           'Electrical':    { bg: '#fffce4', text: '#806000', border: '#e0d080' },
           'Plumbing':      { bg: '#e4f8ff', text: '#005080', border: '#80c8e8' },
           'Landscape':     { bg: '#edfdf0', text: '#226a30', border: '#88d8a0' },
+          'Specification': { bg: '#f5f0ff', text: '#5030a0', border: '#c0a8e8' },
         };
         return map[disc] || { bg: '#f4f4f4', text: '#555555', border: '#d0d0d0' };
       }
 
-      // ── Spec issues list ─────────────────────────────────────────────────
+      // ── Issues list ──────────────────────────────────────────────────────
       function renderIssuesList() {
-        const sectionIssues = state.issues.filter(
-          i => i.section_number === state.currentSection && !state.dismissed.has(i.id)
-        );
-
-        const errors = sectionIssues.filter(i => i.type === 'error').length;
-        const warnings = sectionIssues.filter(i => i.type === 'warning').length;
-        const notes = sectionIssues.filter(i => i.type === 'note').length;
-
-        document.getElementById('issues-summary').innerHTML = `
-          <div class="issue-count count-error"><div class="issue-count-dot"></div>${errors} Error${errors !== 1 ? 's' : ''}</div>
-          <div class="issue-count count-warn"><div class="issue-count-dot"></div>${warnings} Warning${warnings !== 1 ? 's' : ''}</div>
-          <div class="issue-count count-info"><div class="issue-count-dot"></div>${notes} Note${notes !== 1 ? 's' : ''}</div>
-        `;
-
-        if (!state.currentSection) {
-          document.getElementById('issues-list').innerHTML = '<div class="empty-state"><div class="empty-icon">✓</div>Select a section to view its issues</div>';
-          return;
-        }
-
-        if (!sectionIssues.length) {
-          document.getElementById('issues-list').innerHTML = '<div class="empty-state"><div class="empty-icon">✓</div>No issues in this section</div>';
-          return;
-        }
-
-        const sorted = [...sectionIssues].sort((a, b) => {
-          const order = { error: 0, warning: 1, note: 2 };
-          return (order[a.type] ?? 3) - (order[b.type] ?? 3);
-        });
-
-        let html = '';
-        for (const iss of sorted) {
-          const bc = iss.type === 'error' ? 'badge-error' : iss.type === 'warning' ? 'badge-warn' : 'badge-info';
-          const bl = iss.type === 'error' ? 'Error' : iss.type === 'warning' ? 'Warning' : 'Note';
-          html += `<div class="issue-item" id="issue-item-${escAttr(iss.id)}" onclick="selectIssue('${escAttr(iss.id)}')">
-            <div class="issue-item-header">
-              <span class="issue-type-badge ${bc}">${bl}</span>
-              <span class="issue-location">§${esc(iss.clause_id)}</span>
-            </div>
-            <div class="issue-desc">${esc(iss.description)}</div>
-            <div class="issue-clause-preview">"${esc(iss.excerpt)}"</div>
-            <div class="issue-actions">
-              <button class="issue-btn" onclick="event.stopPropagation();jumpToClause('${escAttr(iss.id)}')">Jump to clause</button>
-              <button class="issue-btn" onclick="event.stopPropagation();askAboutIssue('${escAttr(iss.id)}')">Ask</button>
-              <button class="issue-btn" onclick="event.stopPropagation();dismissIssue('${escAttr(iss.id)}')">Dismiss</button>
-            </div>
-          </div>`;
-        }
-
-        document.getElementById('issues-list').innerHTML = html;
-      }
-
-      // ── Drawing issues list ──────────────────────────────────────────────
-      function renderDrawingIssuesList() {
-        const sheetIssues = state.drawingIssues.filter(
-          i => i.sheet_number === state.currentSheet && !state.drawingDismissed.has(i.id)
+        const sheetIssues = state.issues.filter(
+          i => i.sheet_number === state.currentSheet && !state.dismissed.has(i.id)
         );
 
         const errors = sheetIssues.filter(i => i.type === 'error').length;
@@ -3042,15 +2718,15 @@
         for (const iss of sorted) {
           const bc = iss.type === 'error' ? 'badge-error' : iss.type === 'warning' ? 'badge-warn' : 'badge-info';
           const bl = iss.type === 'error' ? 'Error' : iss.type === 'warning' ? 'Warning' : 'Note';
-          html += `<div class="issue-item" id="draw-issue-${escAttr(iss.id)}">
+          html += `<div class="issue-item" id="issue-${escAttr(iss.id)}">
             <div class="issue-item-header">
               <span class="issue-type-badge ${bc}">${bl}</span>
               <span class="issue-location">${esc(iss.sheet_number)}</span>
             </div>
             <div class="issue-desc">${esc(iss.description)}</div>
             <div class="issue-actions">
-              <button class="issue-btn" onclick="askAboutDrawingIssue('${escAttr(iss.id)}')">Ask</button>
-              <button class="issue-btn" onclick="dismissDrawingIssue('${escAttr(iss.id)}')">Dismiss</button>
+              <button class="issue-btn" onclick="askAboutIssue('${escAttr(iss.id)}')">Ask</button>
+              <button class="issue-btn" onclick="dismissIssue('${escAttr(iss.id)}')">Dismiss</button>
             </div>
           </div>`;
         }
@@ -3058,61 +2734,16 @@
         document.getElementById('issues-list').innerHTML = html;
       }
 
-      // ── Sections tab ─────────────────────────────────────────────────────
-      function renderSectionsTab() {
-        if (!state.sections.length) {
-          document.getElementById('sections-list').innerHTML = '<div class="empty-state"><div class="empty-icon">📋</div>No specification loaded</div>';
-          return;
-        }
-
-        const groups = {};
-        for (const s of state.sections) {
-          const key = `${s.division}|${s.division_name}`;
-          if (!groups[key]) groups[key] = { division: s.division, name: s.division_name, sections: [] };
-          groups[key].sections.push(s);
-        }
-
-        let html = '';
-        for (const key of Object.keys(groups)) {
-          const g = groups[key];
-          const isCurrentDiv = g.sections.some(s => s.number === state.currentSection);
-          const bgStyle = isCurrentDiv ? 'background:#f0f9f4;' : '';
-          const labelColor = isCurrentDiv ? '#3dba6e' : '#aaaaaa';
-          const viewing = isCurrentDiv ? ' · viewing' : '';
-
-          html += `<div style="padding:14px 16px;border-bottom:1px solid #ebebeb;${bgStyle}">
-            <div style="font-size:0.65rem;color:${labelColor};letter-spacing:0.06em;text-transform:uppercase;margin-bottom:10px;">Division ${g.division} – ${esc(g.name)}${viewing}</div>
-            <div style="display:flex;flex-direction:column;gap:4px;">`;
-
-          for (const s of g.sections) {
-            const isCurrent = s.number === state.currentSection;
-            const color = isCurrent ? 'color:#3dba6e;' : 'color:#333333;';
-            const ic = s.issue_counts;
-            let flags = '';
-            if (ic.errors > 0) flags += ` <span class="inline-flag flag-error" style="font-size:0.6rem;">${ic.errors} Error${ic.errors !== 1 ? 's' : ''}</span>`;
-            if (ic.warnings > 0) flags += ` <span class="inline-flag flag-warn" style="font-size:0.6rem;">${ic.warnings} Warning${ic.warnings !== 1 ? 's' : ''}</span>`;
-            if (ic.notes > 0) flags += ` <span class="inline-flag flag-info" style="font-size:0.6rem;">${ic.notes} Note${ic.notes !== 1 ? 's' : ''}</span>`;
-            html += `<div class="spec-clause" style="padding-left:0;border-left:none;cursor:pointer;${color}" onclick="switchSection('${escAttr(s.number)}')">
-              ${esc(s.number)} — ${esc(s.title)}${flags}
-            </div>`;
-          }
-
-          html += `</div></div>`;
-        }
-
-        document.getElementById('sections-list').innerHTML = html;
-      }
-
       // ── Sheets tab ───────────────────────────────────────────────────────
       function renderSheetsTab() {
-        if (!state.drawingSheets.length) {
-          document.getElementById('sheets-list').innerHTML = '<div class="empty-state"><div class="empty-icon">📐</div>No drawing set loaded</div>';
+        if (!state.sheets.length) {
+          document.getElementById('sheets-list').innerHTML = '<div class="empty-state"><div class="empty-icon">📐</div>No documents loaded</div>';
           return;
         }
 
-        const disciplineOrder = ['Architectural', 'Structural', 'Civil', 'Mechanical', 'Electrical', 'Plumbing', 'Landscape', 'Other'];
+        const disciplineOrder = ['Architectural', 'Structural', 'Civil', 'Mechanical', 'Electrical', 'Plumbing', 'Landscape', 'Specification', 'General', 'Other'];
         const groups = {};
-        for (const s of state.drawingSheets) {
+        for (const s of state.sheets) {
           const disc = s.discipline || 'Other';
           if (!groups[disc]) groups[disc] = [];
           groups[disc].push(s);
@@ -3153,17 +2784,8 @@
 
       // ── Grade tab ────────────────────────────────────────────────────────
       function renderGradeTab() {
-        const grade = state.drawingFilename ? state.drawingGrade : state.grade;
-        const subtitle = state.drawingFilename
-          ? `${state.drawingSheets.length} sheet${state.drawingSheets.length !== 1 ? 's' : ''} analyzed`
-          : `${state.sections.length} section${state.sections.length !== 1 ? 's' : ''} analyzed`;
-        renderGradeInto(grade, subtitle
-        );
-      }
-
-      function renderDrawingGradeTab() {
-        renderGradeInto(state.drawingGrade,
-          `${state.drawingSheets.length} sheet${state.drawingSheets.length !== 1 ? 's' : ''} analyzed`
+        renderGradeInto(state.grade,
+          `${state.sheets.length} sheet${state.sheets.length !== 1 ? 's' : ''} analyzed`
         );
       }
 
@@ -3237,46 +2859,24 @@
 
       // ── Chat ─────────────────────────────────────────────────────────────
       function initChat() {
-        const specPart = state.filename
-          ? `<strong>${esc(state.filename)}</strong> — ${state.sections.length} sections, ${state.issues.filter(i => !state.dismissed.has(i.id)).length} issues`
-          : null;
-        const drawPart = state.drawingFilename
-          ? `<strong>${esc(state.drawingFilename)}</strong> — ${state.drawingSheets.length} sheets, ${state.drawingIssues.filter(i => !state.drawingDismissed.has(i.id)).length} issues`
-          : null;
+        const activeIssues = state.issues.filter(i => !state.dismissed.has(i.id)).length;
+        const docSummary = state.filenames.length
+          ? `<strong>${esc(state.filenames.join(', '))}</strong> — ${state.sheets.length} sheets, ${activeIssues} issues`
+          : 'your documents';
 
-        const docSummary = [specPart, drawPart].filter(Boolean).join(' and ');
-
-        // Update suggested questions based on what's loaded
-        const suggestedEl = document.getElementById('suggested-questions');
-        if (state.filename && state.drawingFilename) {
-          suggestedEl.innerHTML = `
-            <div class="suggested-label">Suggested</div>
-            <button class="suggested-q" onclick="addQuestion(this)">Are there conflicts between the spec sections?</button>
-            <button class="suggested-q" onclick="addQuestion(this)">Do the drawing notes reference the correct spec sections?</button>
-            <button class="suggested-q" onclick="addQuestion(this)">Summarize all submittal requirements.</button>
-          `;
-        } else if (state.drawingFilename) {
-          suggestedEl.innerHTML = `
-            <div class="suggested-label">Suggested</div>
-            <button class="suggested-q" onclick="addQuestion(this)">Which sheets are missing from the drawing index?</button>
-            <button class="suggested-q" onclick="addQuestion(this)">Are code compliance notes present on all required sheets?</button>
-            <button class="suggested-q" onclick="addQuestion(this)">Summarize all title block issues.</button>
-          `;
-        } else {
-          suggestedEl.innerHTML = `
-            <div class="suggested-label">Suggested</div>
-            <button class="suggested-q" onclick="addQuestion(this)">Are there any conflicts between sections?</button>
-            <button class="suggested-q" onclick="addQuestion(this)">Which standards references are outdated?</button>
-            <button class="suggested-q" onclick="addQuestion(this)">Summarize all submittal requirements.</button>
-          `;
-        }
+        document.getElementById('suggested-questions').innerHTML = `
+          <div class="suggested-label">Suggested</div>
+          <button class="suggested-q" onclick="addQuestion(this)">Which sheets are missing from the drawing index?</button>
+          <button class="suggested-q" onclick="addQuestion(this)">Are code compliance notes present on all required sheets?</button>
+          <button class="suggested-q" onclick="addQuestion(this)">Are there any spec-to-drawing coordination conflicts?</button>
+        `;
 
         document.getElementById('chat-messages').innerHTML = `
           <div class="msg assistant">
             <div class="msg-role">Assistant</div>
             <div class="msg-bubble">
               I've analyzed ${docSummary}.<br><br>
-              Ask me anything about these documents — I can explain issues, compare sections to drawings, check coordination, or summarize requirements.
+              Ask me anything about these documents — I can explain issues, check coordination, or summarize requirements.
             </div>
           </div>`;
       }
@@ -3335,49 +2935,12 @@
       }
 
       // ── Interactions ─────────────────────────────────────────────────────
-      function switchSection(number) {
-        state.currentSection = number;
-        renderDocPane();
-        renderIssuesList();
-        renderSectionsTab();
-        switchTabByName('issues');
-      }
-
       function switchSheet(number) {
         state.currentSheet = number;
-        renderDrawingPane();
-        renderDrawingIssuesList();
+        renderDocPane();
+        renderIssuesList();
         renderSheetsTab();
         switchTabByName('issues');
-      }
-
-      function selectIssue(id) {
-        document.querySelectorAll('.issue-item').forEach(el => el.classList.remove('selected'));
-        const el = document.getElementById(`issue-item-${id}`);
-        if (el) el.classList.add('selected');
-      }
-
-      function jumpToClause(issueId) {
-        const issue = state.issues.find(i => i.id === issueId);
-        if (!issue) return;
-
-        if (issue.section_number !== state.currentSection) {
-          state.currentSection = issue.section_number;
-          renderDocPane();
-          renderIssuesList();
-          renderSectionsTab();
-        }
-
-        setTimeout(() => {
-          const el = document.getElementById(clauseElId(issue.clause_id));
-          if (el) {
-            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            el.classList.remove('clause-flash');
-            void el.offsetWidth;
-            el.classList.add('clause-flash');
-            setTimeout(() => el.classList.remove('clause-flash'), 1700);
-          }
-        }, 80);
       }
 
       function askAboutIssue(issueId) {
@@ -3385,16 +2948,7 @@
         if (!issue) return;
         switchTabByName('ask');
         const input = document.getElementById('chat-input');
-        input.value = `Explain the issue at §${issue.clause_id}: ${issue.description}`;
-        input.focus();
-      }
-
-      function askAboutDrawingIssue(issueId) {
-        const issue = state.drawingIssues.find(i => i.id === issueId);
-        if (!issue) return;
-        switchTabByName('ask');
-        const input = document.getElementById('chat-input');
-        input.value = `Explain this drawing issue on sheet ${issue.sheet_number}: ${issue.description}`;
+        input.value = `Explain this issue on ${issue.sheet_number}: ${issue.description}`;
         input.focus();
       }
 
@@ -3402,53 +2956,23 @@
         state.dismissed.add(issueId);
         const issue = state.issues.find(i => i.id === issueId);
         if (issue) {
-          const section = state.sections.find(s => s.number === issue.section_number);
-          if (section) {
-            const key = issue.type === 'error' ? 'errors' : issue.type === 'warning' ? 'warnings' : 'notes';
-            section.issue_counts[key] = Math.max(0, section.issue_counts[key] - 1);
-          }
-        }
-        renderDocPane();
-        renderIssuesList();
-        renderSectionsTab();
-      }
-
-      function dismissDrawingIssue(issueId) {
-        state.drawingDismissed.add(issueId);
-        const issue = state.drawingIssues.find(i => i.id === issueId);
-        if (issue) {
-          const sheet = state.drawingSheets.find(s => s.number === issue.sheet_number);
+          const sheet = state.sheets.find(s => s.number === issue.sheet_number);
           if (sheet && sheet.issue_counts) {
             const key = issue.type === 'error' ? 'errors' : issue.type === 'warning' ? 'warnings' : 'notes';
             sheet.issue_counts[key] = Math.max(0, sheet.issue_counts[key] - 1);
           }
         }
-        renderDrawingPane();
-        renderDrawingIssuesList();
+        renderDocPane();
+        renderIssuesList();
         renderSheetsTab();
-      }
-
-      // ── Doc search (spec mode only) ──────────────────────────────────────
-      function onDocSearch() {
-        const q = document.getElementById('doc-search').value.toLowerCase().trim();
-        const scroll = document.getElementById('doc-scroll');
-        scroll.querySelectorAll('.spec-clause').forEach(el => {
-          el.style.display = (!q || el.textContent.toLowerCase().includes(q)) ? '' : 'none';
-        });
-        scroll.querySelectorAll('.spec-section').forEach(section => {
-          const visible = [...section.querySelectorAll('.spec-clause')].some(el => el.style.display !== 'none');
-          section.style.display = (!q || visible) ? '' : 'none';
-        });
       }
 
       // ── Export report (.doc / Word) ──────────────────────────────────────
       function exportReport() {
-        const hasSpec = !!state.filename;
-        const hasDrawings = !!state.drawingFilename;
-
-        if (!hasSpec && !hasDrawings) { alert('No documents loaded.'); return; }
+        if (!state.filenames.length) { alert('No documents loaded.'); return; }
 
         const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+        const issues = state.issues.filter(i => !state.dismissed.has(i.id));
 
         function badgeColor(type) {
           if (type === 'error')   return { bg: '#fdeaea', text: '#c02020', border: '#e8a8a8', label: 'Error' };
@@ -3498,54 +3022,34 @@
             </table>`;
         }
 
-        function renderIssueRows(issues) {
-          if (!issues.length) return '<p style="color:#aaa;font-size:11pt;">No issues.</p>';
+        function renderIssueRows(issueList) {
+          if (!issueList.length) return '<p style="color:#aaa;font-size:11pt;">No issues.</p>';
           let html = '';
-          for (const iss of issues) {
+          for (const iss of issueList) {
             const b = badgeColor(iss.type);
-            const location = iss.clause_id ? `§${iss.clause_id}` : (iss.sheet_number || '');
-            const excerpt = iss.excerpt ? `<div style="margin:4px 0 0;font-size:10pt;color:#aaa;font-style:italic;padding:4px 8px;background:#f6f6f6;border-left:3px solid #ddd;">&ldquo;${iss.excerpt}&rdquo;</div>` : '';
             html += `<div style="margin-bottom:14px;padding:12px 14px;border:1px solid #e8e8e8;border-radius:6px;font-family:sans-serif;">
               <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
                 <span style="font-size:9pt;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:3px;background:${b.bg};color:${b.text};border:1px solid ${b.border};">${b.label}</span>
-                <span style="font-size:10pt;color:#aaa;font-family:monospace;">${location}</span>
+                <span style="font-size:10pt;color:#aaa;font-family:monospace;">${iss.sheet_number || ''}</span>
               </div>
               <div style="font-size:11pt;font-weight:600;color:#222;margin-bottom:4px;">${iss.description}</div>
-              ${excerpt}
               <div style="font-size:10pt;color:#666;margin-top:6px;line-height:1.5;">${iss.detail || ''}</div>
             </div>`;
           }
           return html;
         }
 
-        let body = `
+        const body = `
           <div style="font-family:sans-serif;max-width:720px;margin:0 auto;padding:40px 0;">
             <h1 style="font-size:18pt;font-weight:700;color:#111;margin:0 0 4px;">QA/QC — Construction Document Review</h1>
-            <p style="font-size:10pt;color:#aaa;margin:0 0 32px;">${date}</p>`;
-
-        if (hasSpec) {
-          const issues = state.issues.filter(i => !state.dismissed.has(i.id));
-          body += `
-            <h2 style="font-size:13pt;font-weight:600;color:#111;border-bottom:2px solid #e8e8e8;padding-bottom:8px;margin:0 0 16px;">Specification</h2>
-            <p style="font-size:10pt;color:#666;margin:0 0 20px;">${state.filename} &nbsp;·&nbsp; ${state.sections.length} sections &nbsp;·&nbsp; ${issues.filter(i=>i.type==='error').length} errors, ${issues.filter(i=>i.type==='warning').length} warnings, ${issues.filter(i=>i.type==='note').length} notes</p>
+            <p style="font-size:10pt;color:#aaa;margin:0 0 32px;">${date}</p>
+            <h2 style="font-size:13pt;font-weight:600;color:#111;border-bottom:2px solid #e8e8e8;padding-bottom:8px;margin:0 0 16px;">Documents</h2>
+            <p style="font-size:10pt;color:#666;margin:0 0 20px;">${state.filenames.join(', ')} &nbsp;·&nbsp; ${state.sheets.length} sheets, ${state.totalPages} pages &nbsp;·&nbsp; ${issues.filter(i=>i.type==='error').length} errors, ${issues.filter(i=>i.type==='warning').length} warnings, ${issues.filter(i=>i.type==='note').length} notes</p>
             <h3 style="font-size:11pt;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.06em;margin:0 0 12px;">Grade</h3>
             ${renderGradeTable(state.grade)}
             <h3 style="font-size:11pt;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.06em;margin:28px 0 12px;">Issues</h3>
-            ${renderIssueRows(issues)}`;
-        }
-
-        if (hasDrawings) {
-          const issues = state.drawingIssues.filter(i => !state.drawingDismissed.has(i.id));
-          body += `
-            <h2 style="font-size:13pt;font-weight:600;color:#111;border-bottom:2px solid #e8e8e8;padding-bottom:8px;margin:32px 0 16px;">Drawing Set</h2>
-            <p style="font-size:10pt;color:#666;margin:0 0 20px;">${state.drawingFilename} &nbsp;·&nbsp; ${state.drawingSheets.length} sheets, ${state.drawingTotalPages} pages &nbsp;·&nbsp; ${issues.filter(i=>i.type==='error').length} errors, ${issues.filter(i=>i.type==='warning').length} warnings, ${issues.filter(i=>i.type==='note').length} notes</p>
-            <h3 style="font-size:11pt;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.06em;margin:0 0 12px;">Grade</h3>
-            ${renderGradeTable(state.drawingGrade)}
-            <h3 style="font-size:11pt;font-weight:600;color:#555;text-transform:uppercase;letter-spacing:.06em;margin:28px 0 12px;">Issues</h3>
-            ${renderIssueRows(issues)}`;
-        }
-
-        body += `</div>`;
+            ${renderIssueRows(issues)}
+          </div>`;
 
         const html = `<html xmlns:o="urn:schemas-microsoft-com:office:office"
           xmlns:w="urn:schemas-microsoft-com:office:word"
@@ -3555,7 +3059,7 @@
           <style>body{font-family:Calibri,sans-serif;}</style>
           </head><body>${body}</body></html>`;
 
-        const basename = (state.filename || state.drawingFilename || 'documents').replace(/\.pdf$/i, '');
+        const basename = (state.filenames[0] || 'documents').replace(/\.pdf$/i, '');
         const blob = new Blob([html], { type: 'application/msword' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
