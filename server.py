@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import gc
 import io
 import json
 import os
@@ -75,7 +76,7 @@ def extract_pdf_text(data: bytes) -> str:
 # All pages are rendered; batching in the endpoint handles context limits.
 RENDER_SCALE = 2.0
 JPEG_QUALITY = 90
-PAGES_PER_BATCH = 15  # pages per Claude vision call at 2× scale
+PAGES_PER_BATCH = 8   # pages per Claude vision call at 2× scale
 
 
 def extract_pdf_text_and_count(pdf_path: str) -> tuple[str, int]:
@@ -688,8 +689,8 @@ async def upload_documents(files: List[UploadFile] = File(...)):
                     msg = await asyncio.to_thread(
                         client.messages.create,
                         model="claude-sonnet-4-6",
-                        max_tokens=24000,
-                        thinking={"type": "adaptive"},
+                        max_tokens=16000,
+                        thinking={"type": "enabled", "budget_tokens": 5000},
                         messages=[{"role": "user", "content": content}],
                     )
                     raw_text = next(b.text for b in msg.content if b.type == "text")
@@ -701,6 +702,7 @@ async def upload_documents(files: List[UploadFile] = File(...)):
                 # Explicitly drop batch images from memory before next render.
                 del batch
                 del content
+                gc.collect()
 
                 batch_sheets = batch_result.get("sheets", [])
                 batch_issues = batch_result.get("issues", [])
